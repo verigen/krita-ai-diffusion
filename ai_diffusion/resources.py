@@ -120,6 +120,14 @@ class Arch(Enum):
             return Arch.qwen
         if string == "z-image":
             return Arch.zimage
+
+        ## Hack: ComfyUI for some reason returns "Unknown" for z-image models.
+        ## Last hope detect based on filename.
+        if string == "unknown" and filename:
+            lower_filename = filename.lower()
+            if any(term in lower_filename for term in ["z-image", "z_image", "zimage"]):
+                return Arch.zimage
+
         return None
 
     @staticmethod
