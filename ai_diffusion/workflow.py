@@ -157,6 +157,8 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
     for lora in checkpoint.loras:
         if arch.is_flux_like and model_info.quantization is Quantization.svdq:
             model = w.nunchaku_load_flux_lora(model, lora.name, lora.strength)
+        elif arch.is_zimage_like and model_info.quantization is Quantization.svdq:
+            model = w.nunchaku_load_zimage_lora(model, lora.name, lora.strength)
         elif arch.is_qwen_like and model_info.quantization is Quantization.svdq:
             raise RuntimeError("Lora are not yet supported with quantized Qwen models")
         else:

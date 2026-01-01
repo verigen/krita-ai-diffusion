@@ -195,6 +195,10 @@ class Arch(Enum):
         return self in [Arch.flux, Arch.flux_k]
 
     @property
+    def is_zimage_like(self):
+        return self is Arch.zimage
+
+    @property
     def is_qwen_like(self):
         return self in [Arch.qwen, Arch.qwen_e, Arch.qwen_e_p, Arch.qwen_l]
 

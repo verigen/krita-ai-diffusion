@@ -586,6 +586,11 @@ class ComfyWorkflow:
             "NunchakuFluxLoraLoader", 1, model=model, lora_name=name, lora_strength=strength
         )
 
+    def nunchaku_load_zimage_lora(self, model: Output, name: str, strength: float):
+        return self.add(
+            "NunchakuZImageLoraLoader", 1, model=model, lora_name=name, lora_strength=strength
+        )
+
     def t5_tokenizer_options(self, clip: Output, min_padding: int, min_length: int):
         return self.add(
             "T5TokenizerOptions", 1, clip=clip, min_padding=min_padding, min_length=min_length

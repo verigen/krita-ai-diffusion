@@ -12,6 +12,7 @@ from .layer import Layer, LayerManager, LayerType
 from .pose import Pose
 from .localization import translate as _
 from .util import acquire_elements
+from .util import client_logger as log
 
 
 class Document(QObject):
