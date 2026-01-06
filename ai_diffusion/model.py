@@ -106,6 +106,7 @@ class Model(QObject, ObservableProperties):
     seed = Property(0, persist=True)
     fixed_seed = Property(False, persist=True)
     resolution_multiplier = Property(1.0, persist=True)
+    selection_strength = Property(100, persist=True)
     queue_mode = Property(QueueMode.back, persist=True)
     translation_enabled = Property(True, persist=True)
     layer_count = Property(4, persist=True)
@@ -122,6 +123,7 @@ class Model(QObject, ObservableProperties):
     seed_changed = pyqtSignal(int)
     fixed_seed_changed = pyqtSignal(bool)
     resolution_multiplier_changed = pyqtSignal(float)
+    selection_strength_changed = pyqtSignal(int)
     queue_mode_changed = pyqtSignal(QueueMode)
     translation_enabled_changed = pyqtSignal(bool)
     layer_count_changed = pyqtSignal(int)
@@ -208,7 +210,9 @@ class Model(QObject, ObservableProperties):
         regions = self.active_regions
         region_layer = None
 
-        selection_mod = get_selection_modifiers(self.inpaint.mode, strength)
+        selection_mod = get_selection_modifiers(self.inpaint.mode, strength).with_strength(
+            self.selection_strength / 100
+        )
         mask, selection_bounds = self._doc.create_mask_from_selection(
             selection_mod.padding, invert=selection_mod.invert, min_size=256
         )
@@ -1452,6 +1456,14 @@ class SelectionModifiers(NamedTuple):
     feather: float
     padding: float
     invert: bool
+
+    def with_strength(self, strength: float):
+        return SelectionModifiers(
+            grow=self.grow * strength,
+            feather=self.feather * strength,
+            padding=self.padding * strength,
+            invert=self.invert,
+        )
 
     def apply(self, selection_bounds: Bounds | None):
         if selection_bounds is None:

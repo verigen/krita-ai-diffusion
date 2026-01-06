@@ -9,6 +9,7 @@ from PyQt5.QtGui import QPalette, QColor, QIcon
 from PyQt5.QtWidgets import QAction, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar
 from PyQt5.QtWidgets import QListWidget, QListWidgetItem, QListView, QSizePolicy
 from PyQt5.QtWidgets import QComboBox, QCheckBox, QMenu, QMessageBox, QToolButton
+from PyQt5.QtWidgets import QSlider
 
 from ..properties import Binding, Bind, bind, bind_combo, bind_toggle
 from ..image import Bounds, Extent, Image
@@ -529,6 +530,64 @@ class AnimatedListItem(QListWidgetItem):
         self.setIcon(self._images[self._current])
 
 
+class SelectionDetailsWidget(QWidget):
+    _model: Model
+    _model_bindings: list[QMetaObject.Connection | Binding]
+    _cached_selection_strength: float
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self._model = root.active_model
+        self._model_bindings = []
+        self._cached_selection_strength = 100
+
+        self.use_selection_strength = QCheckBox(self)
+        self.use_selection_strength.setText(_("Selection Strength"))
+        self.use_selection_strength.setToolTip(
+            _("Apply selection growth, feather and padding strength settings to inpainting regions")
+        )
+        self.use_selection_strength.stateChanged.connect(self.toggle_selection_strength_slider)
+
+        self.selection_strength_slider = QSlider(Qt.Horizontal, self)
+        self.selection_strength_slider.setRange(0, 100)
+        self.selection_strength_slider.setValue(100)
+        self.selection_strength_slider.setPageStep(10)
+        self.selection_strength_slider.setSingleStep(10)
+        self.selection_strength_slider.setVisible(False)
+        self.selection_strength_slider.setToolTip(
+            _("Adjust the strength of selection growth, feather and padding")
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.use_selection_strength)
+        layout.addWidget(self.selection_strength_slider, 1)
+
+        self.setLayout(layout)
+
+    def toggle_selection_strength_slider(self, state):
+        if state == Qt.Checked:
+            self.selection_strength_slider.setVisible(state == Qt.Checked)
+            self.selection_strength_slider.setValue(self._cached_selection_strength)
+        else:
+            self._cached_selection_strength = self.selection_strength_slider.value()
+            self.selection_strength_slider.setVisible(False)
+            self.selection_strength_slider.setValue(100)
+
+    @property
+    def model(self):
+        return self._model
+
+    @model.setter
+    def model(self, model: Model):
+        if self._model != model:
+            Binding.disconnect_all(self._model_bindings)
+            self._model = model
+            self._model_bindings = [
+                bind(model, "selection_strength", self.selection_strength_slider, "value")
+            ]
+
+
 class CustomInpaintWidget(QWidget):
     _model: Model
     _model_bindings: list[QMetaObject.Connection | Binding]
@@ -726,6 +785,9 @@ class GenerationWidget(QWidget):
         self.custom_inpaint = CustomInpaintWidget(self)
         layout.addWidget(self.custom_inpaint)
 
+        self.selection_details = SelectionDetailsWidget(self)
+        layout.addWidget(self.selection_details)
+
         self.generate_button = GenerateButton(JobKind.diffusion, self)
 
         self.inpaint_mode_button = QToolButton(self)
@@ -806,6 +868,7 @@ class GenerationWidget(QWidget):
             ]
             self.region_prompt.regions = model.active_regions
             self.custom_inpaint.model = model
+            self.selection_details.model = model
             self.generate_button.model = model
             self.queue_button.model = model
             self.progress_bar.model = model
@@ -954,6 +1017,7 @@ class GenerationWidget(QWidget):
         if self.model.document.selection_bounds is None and not is_region_only:
             self.inpaint_mode_button.setVisible(can_switch_edit)
             self.custom_inpaint.setVisible(False)
+            self.selection_details.setVisible(False)
             if is_edit:
                 icon = "edit"
                 text = _("Edit")
@@ -966,6 +1030,7 @@ class GenerationWidget(QWidget):
         else:
             self.inpaint_mode_button.setVisible(True)
             self.custom_inpaint.setVisible(self.model.inpaint.mode is InpaintMode.custom)
+            self.selection_details.setVisible(self.model.inpaint.mode is InpaintMode.custom)
             mode = self.model.resolve_inpaint_mode()
             text = _("Generate")
             if is_edit:

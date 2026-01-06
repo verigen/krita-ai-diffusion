@@ -69,7 +69,7 @@ class QueuePopup(QMenu):
         self.setStyleSheet(
             f"""
             QWidget#QueuePopup {{
-                background-color: {palette.window().color().name()}; 
+                background-color: {palette.window().color().name()};
                 border: 1px solid {palette.dark().color().name()};
             }}"""
         )
