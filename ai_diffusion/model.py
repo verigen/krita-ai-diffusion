@@ -1471,7 +1471,6 @@ class SelectionModifiers(NamedTuple):
 
     def with_strength(self, strength: float):
         return SelectionModifiers(
-            grow=self.grow * strength,
             feather=self.feather * strength,
             padding=self.padding * strength,
             invert=self.invert,
