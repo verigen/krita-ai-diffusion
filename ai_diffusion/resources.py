@@ -41,15 +41,15 @@ required_custom_nodes = [
         "External Tooling Nodes",
         "comfyui-tooling-nodes",
         "https://github.com/Acly/comfyui-tooling-nodes",
-        "9d2e03e8d54f2da69cb6f63a0cc0d9dc1ff31cd8",
+        "2d14a03ad84d88ca27993e281fbc56aa1b9c4036",
         ["ETN_LoadImageCache", "ETN_SaveImageCache", "ETN_Translate"],
     ),
     CustomNode(
         "Inpaint Nodes",
         "comfyui-inpaint-nodes",
         "https://github.com/Acly/comfyui-inpaint-nodes",
-        "4ebbdc840db881c50a38965aa7955b76cec2a4c5",
-        ["INPAINT_LoadFooocusInpaint", "INPAINT_ShrinkMask", "INPAINT_ExpandMask"],
+        "ab62c98d408186324eeb7baff32a31dd7961ea64",
+        ["INPAINT_LoadFooocusInpaint", "INPAINT_ShrinkMask", "INPAINT_StabilizeMask"],
     ),
 ]
 
