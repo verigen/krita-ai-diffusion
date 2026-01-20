@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Literal, NamedTuple, cast
 from uuid import uuid4
 from weakref import WeakValueDictionary
-from ai_diffusion import settings
 import krita
 from krita import Krita
 from PyQt5.QtCore import QObject, QByteArray, QTimer, pyqtSignal
@@ -13,7 +12,6 @@ from .layer import Layer, LayerManager, LayerType
 from .pose import Pose
 from .localization import translate as _
 from .util import acquire_elements
-from .util import client_logger as log
 
 
 class SelectionModifiers(NamedTuple):
