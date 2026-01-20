@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple, cast
 from uuid import uuid4
 from weakref import WeakValueDictionary
+from ai_diffusion import settings
 import krita
 from krita import Krita
 from PyQt5.QtCore import QObject, QByteArray, QTimer, pyqtSignal
