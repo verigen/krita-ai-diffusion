@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, NamedTuple, cast
 from uuid import uuid4
 from weakref import WeakValueDictionary
 import krita
@@ -13,6 +13,15 @@ from .pose import Pose
 from .localization import translate as _
 from .util import acquire_elements
 from .util import client_logger as log
+
+
+class SelectionModifiers(NamedTuple):
+    pad_rel: float = 0.0
+    pad_min_px: int = 0
+    size_min_px: int = 0
+    multiple: int = 8
+    square: bool = False
+    invert: bool = False
 
 
 class Document(QObject):
@@ -39,7 +48,7 @@ class Document(QObject):
         return True, None
 
     def create_mask_from_selection(
-        self, padding: float = 0.0, multiple=8, min_size=0, square=False, invert=False
+        self, mod: SelectionModifiers
     ) -> tuple[Mask, Bounds] | tuple[None, None]:
         raise NotImplementedError
 
@@ -184,9 +193,7 @@ class KritaDocument(Document):
             return False, msg_fmt.format("depth", "8-bit integer", depth)
         return True, None
 
-    def create_mask_from_selection(
-        self, padding: float = 0.0, multiple=8, min_size=0, square=False, invert=False
-    ):
+    def create_mask_from_selection(self, mod: SelectionModifiers):
         user_selection = self._doc.selection()
         if not user_selection:
             return None, None
@@ -200,14 +207,14 @@ class KritaDocument(Document):
         )
         original_bounds = Bounds.clamp(original_bounds, self.extent)
         size_factor = original_bounds.extent.diagonal
-        padding_pixels = int(padding * size_factor)
+        pad_px = max(int(mod.pad_rel * size_factor), mod.pad_min_px)
 
-        if invert:
+        if mod.invert:
             selection.invert()
 
         bounds = _selection_bounds(selection)
         bounds = Bounds.pad(
-            bounds, padding_pixels, multiple=multiple, min_size=min_size, square=square
+            bounds, pad_px, multiple=mod.multiple, min_size=mod.size_min_px, square=mod.square
         )
         bounds = Bounds.clamp(bounds, self.extent)
         data = selection.pixelData(*bounds)

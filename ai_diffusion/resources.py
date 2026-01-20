@@ -48,6 +48,7 @@ required_custom_nodes = [
         "Inpaint Nodes",
         "comfyui-inpaint-nodes",
         "https://github.com/Acly/comfyui-inpaint-nodes",
+        # !! Remove workaround in comfy_workflow.py when updating !!
         "ab62c98d408186324eeb7baff32a31dd7961ea64",
         ["INPAINT_LoadFooocusInpaint", "INPAINT_ShrinkMask", "INPAINT_StabilizeMask"],
     ),
@@ -108,9 +109,9 @@ class Arch(Enum):
             return Arch.flux_k
         if string == "flux" or string == "flux-schnell":
             return Arch.flux
-        if string == "flux2" and model_type == "klein-4b":
+        if string == "flux2_4b" or (string == "flux2" and model_type == "klein-4b"):
             return Arch.flux2_4b
-        if string == "flux2" and model_type == "klein-9b":
+        if string == "flux2_9b" or (string == "flux2" and model_type == "klein-9b"):
             return Arch.flux2_9b
         if string == "illu":
             return Arch.illu
@@ -236,6 +237,10 @@ class Arch(Enum):
             case Arch.zimage:
                 return ["qwen_3_4b"]
         raise ValueError(f"Unsupported architecture: {self}")
+
+    @property
+    def latent_compression_factor(self):
+        return 16 if self.is_flux2 else 8
 
     @staticmethod
     def list():
