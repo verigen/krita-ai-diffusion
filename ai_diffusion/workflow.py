@@ -764,9 +764,7 @@ def scale_to_initial(
     extent: ScaledExtent, w: ComfyWorkflow, image: Output, models: ModelDict, is_mask=False
 ):
     if is_mask and extent.target != extent.initial:
-        result = w.scale_mask(image, extent.initial)
-        result = w.stabilize_mask(result)
-        return result
+        return w.scale_mask(image, extent.initial)
     elif not is_mask:
         return scale(extent.input, extent.initial, extent.initial_scaling, w, image, models)
     else:
@@ -984,6 +982,7 @@ def inpaint(
     in_mask = w.load_mask(ensure(images.hires_mask))
     in_mask = apply_grow_feather(w, in_mask, params)
     initial_mask = scale_to_initial(extent, w, in_mask, models, is_mask=True)
+    initial_mask = w.stabilize_mask(initial_mask)
     cropped_mask = w.crop_mask(in_mask, target_bounds)
 
     cond_base = cond.copy()
@@ -1585,7 +1584,9 @@ def prepare(
 
     elif kind is WorkflowKind.inpaint:
         assert isinstance(canvas, Image) and mask and inpaint and style
-        i.images, _ = resolution.prepare_image(canvas, arch, style, perf)
+        i.images, _ = resolution.prepare_image(
+            canvas, arch, style, perf, inpaint=inpaint.use_inpaint_model
+        )
         i.images.hires_mask = mask.to_image(canvas.extent)
         upscale_extent, _ = resolution.prepare_extent(
             mask.bounds.extent, arch, style, perf, downscale=False
