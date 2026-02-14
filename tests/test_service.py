@@ -8,24 +8,30 @@ from ai_diffusion.api import WorkflowInput, WorkflowKind, ControlInput, ImageInp
 from ai_diffusion.api import SamplingInput, ConditioningInput, ExtentInput, RegionInput
 from ai_diffusion.client import Client, ClientEvent
 from ai_diffusion.cloud_client import CloudClient, enumerate_features, apply_limits
-from ai_diffusion.image import Extent, Image, Bounds
+from ai_diffusion.image import Extent, Image, Bounds, ImageCollection
 from ai_diffusion.resources import ControlMode, Arch
 from ai_diffusion.util import ensure
 from .conftest import CloudService
 from .config import test_dir, result_dir
 
 
-async def receive_images(client: Client, work: WorkflowInput):
+async def receive_images(client: Client, work: WorkflowInput | list[WorkflowInput]):
     job_id = None
+    images = ImageCollection()
+    if not isinstance(work, list):
+        work = [work]
     async for msg in client.listen():
         if job_id is None:
-            job_id = await client.enqueue(work)
-        if msg.event is ClientEvent.finished and msg.job_id == job_id:
+            job_id = [await client.enqueue(w) for w in work]
+        if msg.event is ClientEvent.finished and msg.job_id in job_id:
             assert msg.images is not None
-            return msg.images
+            images.append(msg.images)
+            job_id.remove(msg.job_id)
+            if len(job_id) == 0:
+                await client.disconnect()
         if msg.event is ClientEvent.error:
             raise Exception(msg.error)
-    assert False, "Connection closed without receiving images"
+    return images
 
 
 async def connect_cloud(service: CloudService):
@@ -39,7 +45,10 @@ def cloud_client(pytestconfig, qtapp, cloud_service: CloudService):
         pytest.skip("Diffusion is disabled on CI")
     if not cloud_service.enabled:
         pytest.skip("Cloud service not running")
-    return qtapp.run(connect_cloud(cloud_service))
+
+    client = qtapp.run(connect_cloud(cloud_service))
+    yield client
+    qtapp.run(client.disconnect())
 
 
 def run_and_save(
@@ -133,6 +142,8 @@ cost_params = {
     "upscaled-invalid": (Arch.sd15, 1, 512, 512, 10),
     "illustrious": (Arch.illu, 2, 1024, 1024, 20),
     "illustrious-v": (Arch.illu_v, 2, 1024, 1024, 20),
+    "flux2": (Arch.flux2_4b, 2, 1024, 1024, 4),
+    "zimage": (Arch.zimage, 2, 1024, 1024, 9),
 }
 
 
@@ -218,8 +229,7 @@ def test_multiple_jobs(pytestconfig, qtapp, cloud_service: CloudService):
 
     async def run_job(client: CloudClient, index: int):
         workflow = create_simple_workflow(prompt=prompts[index], input=input_image)
-        images = await receive_images(client, workflow)
-        images.append(await receive_images(client, workflow))
+        images = await receive_images(client, [workflow, workflow])
         for i, result in enumerate(images):
             filename = result_dir / f"cloud_multi_user{index}_image{i}.png"
             result.save(filename)
@@ -244,7 +254,16 @@ def test_error_workflow(qtapp, cloud_client: CloudClient):
         run_and_save(qtapp, cloud_client, workflow, "error_workflow")
 
 
-def test_job_timeout(pytestconfig, qtapp, cloud_service: CloudService):
+async def _reset_worker_config(cloud_service: CloudService):
+    for _attempt in range(5):
+        try:
+            await cloud_service.update_worker_config()
+            break
+        except aiohttp.ClientConnectionError:
+            await asyncio.sleep(2)  # Wait for worker to be back up
+
+
+def test_timeout(pytestconfig, qtapp, cloud_service: CloudService):
     if not pytestconfig.getoption("--benchmark"):
         pytest.skip("Only runs with --benchmark")
     if not cloud_service.enabled:
@@ -255,20 +274,43 @@ def test_job_timeout(pytestconfig, qtapp, cloud_service: CloudService):
         client = await CloudClient.connect(cloud_service.url, user["token"])
         big_workflow = create_simple_workflow(input=Extent(2048, 1536))
 
-        await cloud_service.set_worker_job_timeout(5)
+        try:
+            await cloud_service.update_worker_config({"job_timeout": 5})
 
-        with pytest.raises(Exception, match="timeout"):
-            await receive_images(client, big_workflow)
+            with pytest.raises(Exception, match="timeout"):
+                await receive_images(client, big_workflow)
+        finally:
+            await _reset_worker_config(cloud_service)
 
         # Worker should be restarted and accept new jobs
-        for _attempt in range(5):
-            try:
-                await cloud_service.set_worker_job_timeout(480)
-                break
-            except aiohttp.ClientConnectionError:
-                await asyncio.sleep(2)  # Wait for worker to be back up
         small_workflow = create_simple_workflow()
         images = await receive_images(client, small_workflow)
         assert len(images) == 2
+
+    qtapp.run(main())
+
+
+@pytest.mark.parametrize("scenario", ["max_uptime", "max_memory"])
+def test_restart(pytestconfig, qtapp, cloud_service: CloudService, scenario: str):
+    if not pytestconfig.getoption("--benchmark"):
+        pytest.skip("Only runs with --benchmark")
+    if not cloud_service.enabled:
+        pytest.skip("Cloud service not running")
+
+    async def main():
+        user = await cloud_service.create_user("restart-tester")
+        client = await CloudClient.connect(cloud_service.url, user["token"])
+        workflow = create_simple_workflow()
+
+        try:
+            if scenario == "max_uptime":
+                await cloud_service.update_worker_config({"max_uptime": 2})
+            elif scenario == "max_memory":
+                await cloud_service.update_worker_config({"max_memory_usage": 0.1})
+
+            images = await receive_images(client, workflow)
+            assert len(images) == 2
+        finally:
+            await _reset_worker_config(cloud_service)
 
     qtapp.run(main())
