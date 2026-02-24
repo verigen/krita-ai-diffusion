@@ -350,8 +350,8 @@ class TextSetting(SettingWidget):
     def __init__(self, setting: Setting, parent=None):
         super().__init__(setting, parent)
         self._edit = QLineEdit(self)
-        self._edit.setMinimumWidth(230)
-        self._edit.setMaximumWidth(300)
+        self._edit.setMinimumWidth(430)
+        self._edit.setMaximumWidth(600)
         self._edit.textChanged.connect(self._notify_value_changed)
         self.set_widget(self._edit)
 
