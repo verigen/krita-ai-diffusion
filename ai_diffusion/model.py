@@ -245,13 +245,12 @@ class Model(QObject, ObservableProperties):
         mask, selection_bounds = self._doc.create_mask_from_selection(smod)
         bounds = Bounds(0, 0, *extent)
         if mask is None:  # Check for region inpaint
-            inpaint_mode = InpaintMode.fill
             region_layer = regions.get_active_region_layer(use_parent=not self.region_only)
             if not region_layer.is_root:
                 mask = get_region_inpaint_mask(region_layer, extent)
                 bounds = mask.bounds
                 inpaint_mode = InpaintMode.add_object
-        else:  # Selection inpaint
+        else:  # Selection inpaint or refine
             bounds = compute_bounds(extent, mask.bounds if mask else None, workflow_kind)
             bounds = self.inpaint.get_context(self, mask) or bounds
             inpaint_mode = self.resolve_inpaint_mode()
@@ -267,7 +266,7 @@ class Model(QObject, ObservableProperties):
             conditioning = self._add_reference_layers(conditioning)
         original_conditioning = conditioning
         conditioning, loras, prompt_meta = workflow.prepare_prompts(
-            conditioning, self.style, seed, arch, inpaint_mode
+            conditioning, self.style, seed, arch, inpaint_mode if strength == 1.0 else None
         )
 
         if mask is not None or workflow_kind is WorkflowKind.refine:
@@ -281,6 +280,7 @@ class Model(QObject, ObservableProperties):
 
             bounds, mask.bounds = compute_relative_bounds(bounds, mask.bounds)
 
+            assert inpaint_mode is not None
             if inpaint_mode is InpaintMode.custom:
                 inpaint = self.inpaint.get_params(mask, self.is_editing)
             else:
@@ -349,6 +349,9 @@ class Model(QObject, ObservableProperties):
             job = self.jobs.add(kind, copy(params))
             front = queue_mode is QueueMode.front
             await self._enqueue_job(job, input, front=front)
+
+        if self.workspace is not Workspace.custom:
+            self._track_style_usage(self.style)
 
     async def _enqueue_job(self, job: Job, input: WorkflowInput, front: bool = False):
         if not self.jobs.any_executing():
@@ -446,6 +449,7 @@ class Model(QObject, ObservableProperties):
         client = self._connection.client
         min_mask_size = 512 if self.arch is Arch.sd15 else 800
         extent = self._doc.extent
+        regions = self.active_regions
         region_layer = None
         job_regions: list[JobRegion] = []
         inpaint = InpaintParams(InpaintMode.fill, Bounds(0, 0, *extent))
@@ -456,7 +460,7 @@ class Model(QObject, ObservableProperties):
         inpaint = calc_selection_pre_process(inpaint, selection_bounds, smod)
 
         bounds = Bounds(0, 0, *self._doc.extent)
-        region_layer = self.regions.get_active_region_layer(use_parent=False)
+        region_layer = regions.get_active_region_layer(use_parent=False)
         if mask is None and region_layer.bounds != bounds:
             mask = get_region_inpaint_mask(region_layer, extent, min_size=min_mask_size)
             free_space = mask.bounds.extent - region_layer.compute_bounds().extent
@@ -468,9 +472,9 @@ class Model(QObject, ObservableProperties):
             workflow_kind = WorkflowKind.refine_region
             bounds, mask.bounds = compute_relative_bounds(mask.bounds, mask.bounds)
         if mask is not None or workflow_kind is WorkflowKind.refine:
-            image = self._get_current_image(bounds)
+            image = self._get_current_image(bounds, exclude_internal=False)
 
-        conditioning, job_regions = process_regions(self.regions, bounds)
+        conditioning, job_regions = process_regions(regions, bounds)
         conditioning.language = self.prompt_translation_language
         conditioning = self._add_reference_layers(conditioning)
         conditioning, loras, _ = workflow.prepare_prompts(
@@ -519,7 +523,7 @@ class Model(QObject, ObservableProperties):
                 mask, bounds = self.custom.prepare_mask(selection_node, mask, select_bounds, bounds)
 
             img_input = ImageInput.from_extent(bounds.extent)
-            img_input.initial_image = self._get_current_image(bounds)
+            img_input.initial_image = self._get_current_image(bounds, exclude_internal=not is_live)
             img_input.hires_mask = mask.to_image(bounds.extent) if mask else None
 
             params = self.custom.collect_parameters(
@@ -577,9 +581,9 @@ class Model(QObject, ObservableProperties):
         else:
             return input
 
-    def _get_current_image(self, bounds: Bounds):
+    def _get_current_image(self, bounds: Bounds, exclude_internal=True):
         exclude = []
-        if self.workspace is not Workspace.live:
+        if exclude_internal:
             exclude = [  # exclude control layers from projection
                 c.layer for c in self.regions.control if not c.mode.is_part_of_image
             ]
@@ -958,14 +962,25 @@ class Model(QObject, ObservableProperties):
 
     @property
     def active_regions(self):
-        is_edit = self.workspace is Workspace.generation and self.edit_mode
+        is_edit = self.workspace in (Workspace.generation, Workspace.live) and self.edit_mode
         return self.edit_regions if is_edit else self.regions
 
     @property
     def active_style(self):
-        if self.workspace is Workspace.generation and self.edit_mode and self.edit_style:
+        if (
+            self.workspace in (Workspace.generation, Workspace.live)
+            and self.edit_mode
+            and self.edit_style
+        ):
             return self.edit_style
         return self.style
+
+    def _track_style_usage(self, style: Style):
+        if count := settings.recent_styles_count:
+            recent = [f for f in settings.recent_styles if f != style.filename]
+            recent.insert(0, style.filename)
+            settings.recent_styles = recent[:count]
+            settings.save()
 
     @property
     def preview_layer_id(self):
@@ -1306,7 +1321,7 @@ class LiveWorkspace(QObject, ObservableProperties):
         return self._result_composition
 
     def set_result(self, value: Image, params: JobParams):
-        canvas = self.model._get_current_image(params.bounds)
+        canvas = self.model._get_current_image(params.bounds, exclude_internal=False)
         painter = QPainter(canvas._qimage)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
         painter.setBrush(QBrush(QColor(0, 0, 96, 192), Qt.BrushStyle.DiagCrossPattern))
@@ -1427,7 +1442,7 @@ class AnimationWorkspace(QObject, ObservableProperties):
 
     async def _generate_frame(self):
         m = self._model
-        requires_image = m.strength < 1.0 or m.arch.is_edit
+        requires_image = m.strength < 1.0 or m.is_editing
         bounds = Bounds(0, 0, *m.document.extent)
         canvas = m._get_current_image(bounds) if requires_image else bounds.extent
         seed = m.seed if m.fixed_seed else workflow.generate_seed()
@@ -1438,7 +1453,7 @@ class AnimationWorkspace(QObject, ObservableProperties):
     def generate_batch(self):
         m = self._model
         doc = m.document
-        requires_image = m.strength < 1.0 or m.arch.is_edit
+        requires_image = m.strength < 1.0 or m.is_editing
         if requires_image and not m.layers.active.is_animated:
             m.report_error(_("The active layer does not contain an animation."))
             return
@@ -1468,7 +1483,7 @@ class AnimationWorkspace(QObject, ObservableProperties):
         for frame in range(start_frame, end_frame + 1):
             if layer.node.hasKeyframeAtTime(frame) or m.strength == 1.0:
                 canvas: Image | Extent = extent
-                if m.strength < 1.0 or m.arch.is_edit:
+                if m.strength < 1.0 or m.is_editing:
                     canvas = layer.get_pixels(time=frame)
 
                 inputs = self._prepare_input(canvas, seed, frame)
