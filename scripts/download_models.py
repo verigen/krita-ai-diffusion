@@ -58,6 +58,7 @@ def list_models(
     flux2=False,
     illu=False,
     zimage=False,
+    ernie=False,
     upscalers=False,
     checkpoints=None,
     controlnet=False,
@@ -91,6 +92,8 @@ def list_models(
         versions.append(Arch.illu_v)
     if zimage or all:
         versions.append(Arch.zimage)
+    if ernie or all:
+        versions.append(Arch.ernie)
 
     models: set[ModelResource] = set()
     models.update([m for m in default_checkpoints if all or (m.id.identifier in checkpoints)])
@@ -297,6 +300,7 @@ if __name__ == "__main__":
     parser.add_argument("--flux", action="store_true", help="[Workload] everything needed to run Flux (no checkpoints)")
     parser.add_argument("--flux2", action="store_true", help="[Workload] everything needed to run Flux 2 (no checkpoints)")
     parser.add_argument("--zimage", action="store_true", help="[Workload] everything needed to run Z-Image (no checkpoints)")
+    parser.add_argument("--ernie", action="store_true", help="[Workload] everything needed to run ERNIE Image (no checkpoints)")
     parser.add_argument("--checkpoints", action="store_true", dest="checkpoints", help="download all checkpoints for selected workloads")
     parser.add_argument("--controlnet", action="store_true", help="download ControlNet models for selected workloads")
     parser.add_argument("--checkpoint", action="append", choices=checkpoint_names, dest="checkpoint_list", help="download a specific checkpoint (can specify multiple times)")
@@ -323,6 +327,8 @@ if __name__ == "__main__":
         checkpoints += [m.id.identifier for m in default_checkpoints if m.arch is Arch.illu_v]
     if args.checkpoints and args.zimage:
         checkpoints += [m.id.identifier for m in default_checkpoints if m.arch is Arch.zimage]
+    if args.checkpoints and args.ernie:
+        checkpoints += [m.id.identifier for m in default_checkpoints if m.arch is Arch.ernie]
 
     print(f"Generative AI for Krita - Model download - v{resources.version}")
 
@@ -341,6 +347,7 @@ if __name__ == "__main__":
         flux2=args.flux2,
         illu=args.illu,
         zimage=args.zimage,
+        ernie=args.ernie,
         upscalers=args.upscalers,
         checkpoints=checkpoints,
         controlnet=args.controlnet,
