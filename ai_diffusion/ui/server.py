@@ -190,7 +190,6 @@ class PackageGroupWidget(QWidget):
             Arch.flux_k,
             Arch.flux2_4b,
             Arch.zimage,
-            Arch.ernie,
         )
         return (
             not isinstance(item.package, ModelResource)
