@@ -294,9 +294,9 @@ class PromptLibraryWidget(QWidget):
         model = root.model_for_active_document()
         if model is None:
             return
-        model.regions.active_or_root.positive = entry.positive
-        self._library.mark_used(entry.id)
         model.workspace = Workspace.generation
+        model.active_regions.active_or_root.positive = entry.positive
+        self._library.mark_used(entry.id)
 
     def _start_new(self):
         self._open_save_dialog(_("New prompt"))
