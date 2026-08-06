@@ -178,9 +178,35 @@ class PromptFilter(QSortFilterProxyModel):
         self._search_text = ""
         self._category = ""
         self._favorites_only = False
+        self._sort_by_usage = False
         self.setSourceModel(source)
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.sort(0)
+
+    @property
+    def sort_by_usage(self):
+        return self._sort_by_usage
+
+    @sort_by_usage.setter
+    def sort_by_usage(self, value: bool):
+        self._sort_by_usage = value
+        self.invalidate()
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex):
+        if not self._sort_by_usage:
+            return super().lessThan(left, right)
+        source: PromptLibrary = self.sourceModel()  # type: ignore
+        l = source[left.row()]
+        r = source[right.row()]
+        if l.favorite != r.favorite:
+            return l.favorite
+        if l.use_count != r.use_count:
+            return l.use_count > r.use_count
+        l_last = l.last_used or 0.0
+        r_last = r.last_used or 0.0
+        if l_last != r_last:
+            return l_last > r_last
+        return l.name.lower() < r.name.lower()
 
     @property
     def search_text(self):

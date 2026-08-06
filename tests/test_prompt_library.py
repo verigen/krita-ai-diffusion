@@ -163,3 +163,49 @@ def test_search_filter(tmp_path: Path):
     filtered.favorites_only = True
     assert filtered.rowCount() == 1
     assert filtered[0].id == entry_b.id
+
+
+def test_usage_sort_order(tmp_path: Path):
+    library = PromptLibrary(tmp_path / "library.json")
+    a = library.create("Alpha", "prompt a")
+    b = library.create("Beta", "prompt b")
+    c = library.create("Gamma", "prompt c")
+    library.update(b.id, favorite=True)
+    library.mark_used(c.id)
+    library.mark_used(c.id)
+    library.mark_used(a.id)
+
+    filtered = PromptFilter(library)
+    filtered.sort_by_usage = True
+
+    ordered_ids = [filtered[i].id for i in range(filtered.rowCount())]
+    assert ordered_ids == [b.id, c.id, a.id]
+
+
+def test_usage_sort_falls_back_to_alphabetical_when_disabled(tmp_path: Path):
+    library = PromptLibrary(tmp_path / "library.json")
+    library.create("Zeta", "z")
+    library.create("Alpha", "a")
+
+    filtered = PromptFilter(library)
+    assert filtered.sort_by_usage is False
+    names = [filtered[i].name for i in range(filtered.rowCount())]
+    assert names == ["Alpha", "Zeta"]
+
+
+def test_duplicate_names_resolve_by_id(tmp_path: Path):
+    library = PromptLibrary(tmp_path / "library.json")
+    first = library.create("Portrait", "close-up face shot")
+    second = library.create("Portrait", "full body portrait, dramatic lighting")
+
+    filtered = PromptFilter(library)
+    filtered.sort_by_usage = True
+
+    ids = {filtered[i].id for i in range(filtered.rowCount())}
+    assert ids == {first.id, second.id}
+    positives = {filtered[i].positive for i in range(filtered.rowCount())}
+    assert positives == {first.positive, second.positive}
+
+    library.mark_used(second.id)
+    assert ensure(library.find(first.id)).use_count == 0
+    assert ensure(library.find(second.id)).use_count == 1

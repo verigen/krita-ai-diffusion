@@ -4,14 +4,16 @@ from enum import Enum
 from typing import ClassVar, cast
 
 from PyQt5.QtCore import QAbstractProxyModel, QRect, QSize, QStringListModel, Qt
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPalette, QPen, QTextCursor
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPalette, QPen, QPixmap, QTextCursor
 from PyQt5.QtWidgets import QApplication, QCompleter, QPlainTextEdit, QStyle, QStyledItemDelegate
 
 from ..files import FileFilter
 from ..model.root import root
+from ..prompt_library import PromptEntry, PromptFilter, PromptLibrary
 from ..settings import settings
 from ..text import char16_index_to_str_index
 from ..util import ensure, plugin_dir, user_data_dir
+from . import theme
 
 
 class TagType(Enum):
@@ -132,6 +134,80 @@ class TagCompleterDelegate(QStyledItemDelegate):
         return QColor(int(r), int(g), int(b))
 
 
+class PromptCompleterDelegate(QStyledItemDelegate):
+    _star_pixmap = QPixmap(str(theme.icon_path / "star.png")).scaled(
+        16, 16, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+    )
+
+    def paint(self, painter, option, index):
+        entry = self._prompt_entry(index)
+
+        painter = ensure(painter)
+        painter.save()
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+            text_color = option.palette.highlightedText().color()
+        else:
+            text_color = option.palette.text().color()
+
+        name_font = QFont(option.font)
+        name_font.setBold(True)
+        preview_font = QFont(option.font)
+        preview_font.setPointSize(max(6, option.font.pointSize() - 1))
+
+        margin = 4
+        star_width = 16 if entry.favorite else 0
+        rect = option.rect.adjusted(margin, margin, -margin - star_width, -margin)
+        name_height = QFontMetrics(name_font).height()
+        name_rect = QRect(rect.left(), rect.top(), rect.width(), name_height)
+        preview_rect = QRect(
+            rect.left(), name_rect.bottom() + 2, rect.width(), QFontMetrics(preview_font).height()
+        )
+
+        painter.setFont(name_font)
+        painter.setPen(QPen(text_color))
+        elided_name = QFontMetrics(name_font).elidedText(
+            entry.name, Qt.TextElideMode.ElideRight, name_rect.width()
+        )
+        painter.drawText(
+            name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_name
+        )
+
+        if entry.favorite:
+            star_rect = QRect(option.rect.right() - margin - 16, option.rect.top() + margin, 16, 16)
+            painter.drawPixmap(star_rect, self._star_pixmap)
+
+        preview_text = entry.positive.replace("\n", " ")
+        painter.setFont(preview_font)
+        painter.setPen(QPen(QColor(theme.grey)))
+        elided_preview = QFontMetrics(preview_font).elidedText(
+            preview_text, Qt.TextElideMode.ElideRight, preview_rect.width()
+        )
+        painter.drawText(
+            preview_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_preview
+        )
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        name_font = QFont(option.font)
+        name_font.setBold(True)
+        preview_font = QFont(option.font)
+        preview_font.setPointSize(max(6, option.font.pointSize() - 1))
+        size = super().sizeHint(option, index)
+        height = QFontMetrics(name_font).height() + QFontMetrics(preview_font).height() + 10
+        return QSize(size.width(), height)
+
+    def _prompt_entry(self, index) -> PromptEntry:
+        model = index.model()
+        while isinstance(model, QAbstractProxyModel):
+            model = model.sourceModel()
+        assert isinstance(model, PromptLibrary)
+        row_index = index
+        while isinstance(row_index.model(), QAbstractProxyModel):
+            row_index = row_index.model().mapToSource(row_index)
+        return model[row_index.row()]
+
+
 # Ensure there's only one of these globally. It gets pretty big if we have one per widget.
 _tag_model = TagListModel([])
 _tag_files = None
@@ -153,6 +229,10 @@ class PromptAutoComplete:
 
         self._lora_model = FileFilter(root.files.loras)
         self._lora_model.available_only = True
+
+        self._prompt_filter = PromptFilter(root.prompts)
+        self._prompt_filter.sort_by_usage = True
+        self._prompt_delegate = PromptCompleterDelegate()
 
         self._reload_tag_model()
         settings.changed.connect(self._reload_tag_model)
@@ -216,6 +296,15 @@ class PromptAutoComplete:
         if not lora_mode:
             name = prefix.removeprefix("<layer:")
             layer_mode = len(prefix) > len(name)
+        prompt_mode = False
+        if (
+            not lora_mode
+            and not layer_mode
+            and prefix.startswith("/")
+            and not self._widget.is_negative
+        ):
+            name = prefix.removeprefix("/")
+            prompt_mode = True
 
         if lora_mode:
             self._completer.setModel(self._lora_model)
@@ -229,6 +318,11 @@ class PromptAutoComplete:
             self._completion_prefix = name
             self._completion_suffix = ">"
             self._popup.setItemDelegate(self._item_delegate)
+        elif prompt_mode:
+            self._completer.setModel(self._prompt_filter)
+            self._completion_prefix = name
+            self._completion_suffix = ""
+            self._popup.setItemDelegate(self._prompt_delegate)
         else:
             # fall through to tag search
             self._completion_prefix = prefix = self._current_text(separators="()>,|{\n").lstrip()
@@ -255,6 +349,12 @@ class PromptAutoComplete:
                 triggers = " " + file.meta("lora_triggers", "")
         elif prefix.startswith("<layer:"):
             pass
+        elif prefix.startswith("/") and not self._widget.is_negative:
+            entry = self._current_prompt_entry()
+            if entry is None:
+                return
+            completion = entry.positive
+            root.prompts.mark_used(entry.id)
         else:  # tag completion
             # escape () in tags so they won't be interpreted as prompt weights
             completion = completion.replace("(", "\\(").replace(")", "\\)")
@@ -269,6 +369,15 @@ class PromptAutoComplete:
         cursor = self._widget.textCursor()
         cursor.setPosition(start_cursor_pos + len(fill))
         self._widget.setTextCursor(cursor)
+
+    def _current_prompt_entry(self) -> PromptEntry | None:
+        index = self._completer.currentIndex()
+        if not index.isValid():
+            return None
+        source_index = ensure(self._completer.completionModel()).mapToSource(index)
+        if not source_index.isValid():
+            return None
+        return self._prompt_filter[source_index.row()]
 
     @property
     def is_active(self):
