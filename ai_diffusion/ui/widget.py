@@ -887,6 +887,7 @@ class WorkspaceSelectWidget(QToolButton):
         Workspace.live: theme.icon("workspace-live"),
         Workspace.animation: theme.icon("workspace-animation"),
         Workspace.custom: theme.icon("workspace-custom"),
+        Workspace.prompts: theme.icon("workspace-prompts"),
     }
 
     _value = Workspace.generation
@@ -900,6 +901,7 @@ class WorkspaceSelectWidget(QToolButton):
         menu.addAction(self._create_action(_("Live"), Workspace.live))
         menu.addAction(self._create_action(_("Animation"), Workspace.animation))
         menu.addAction(self._create_action(_("Graph"), Workspace.custom))
+        menu.addAction(self._create_action(_("Prompts"), Workspace.prompts))
 
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.setMenu(menu)

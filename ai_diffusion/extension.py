@@ -82,6 +82,9 @@ class AIToolsExtension(Extension):
         self._create_action(
             window, "switch_workspace_graph", actions.set_workspace(Workspace.custom)
         )
+        self._create_action(
+            window, "switch_workspace_prompts", actions.set_workspace(Workspace.prompts)
+        )
         self._create_action(window, "toggle_workspace", actions.toggle_workspace)
         self._create_action(window, "toggle_edit_mode", actions.toggle_edit_mode)
 

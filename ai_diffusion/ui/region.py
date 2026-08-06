@@ -14,7 +14,16 @@ from PyQt5.QtGui import (
     QPixmap,
     QResizeEvent,
 )
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QToolButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..backend.client import Client
 from ..document import LayerType
@@ -26,6 +35,7 @@ from ..model.root import root
 from ..util import ensure
 from . import theme
 from .control import ControlListWidget
+from .prompt_library import PromptSaveDialog
 from .settings import settings
 from .widget import TextPromptWidget
 
@@ -109,6 +119,12 @@ class ActiveRegionWidget(QFrame):
         self._header_label = QLabel(self)
         self._header_label.setStyleSheet(f"font-style: italic; color: {theme.grey};")
 
+        self._save_prompt_button = QToolButton(self)
+        self._save_prompt_button.setIcon(theme.icon("save"))
+        self._save_prompt_button.setAutoRaise(True)
+        self._save_prompt_button.setToolTip(_("Save prompt to library"))
+        self._save_prompt_button.clicked.connect(self._save_prompt_to_library)
+
         self._link_button = QToolButton(self)
         self._link_button.setIcon(theme.icon("link"))
         self._link_button.setAutoRaise(True)
@@ -124,6 +140,7 @@ class ActiveRegionWidget(QFrame):
         header_layout.addWidget(self._header_icon)
         header_layout.addSpacing(5)
         header_layout.addWidget(self._header_label, 1)
+        header_layout.addWidget(self._save_prompt_button)
         header_layout.addWidget(self._link_button)
         header_layout.addWidget(self._remove_button)
 
@@ -253,6 +270,7 @@ class ActiveRegionWidget(QFrame):
         self.positive.move_cursor_to_end()
         self._link_button.setVisible(not is_root_region)
         self._remove_button.setVisible(not is_root_region)
+        self._save_prompt_button.setVisible(region is not None)
         self.positive.setVisible(region is not None)
         self._no_region.setVisible(region is None)
 
@@ -320,6 +338,19 @@ class ActiveRegionWidget(QFrame):
             self._no_region_label.setText(_("Active layer is not linked to a region"))
         else:
             self._no_region_label.setText(_("Active layer cannot be linked to a region"))
+
+    def _save_prompt_to_library(self):
+        region = self._region
+        if region is None:
+            return
+        positive = region.positive
+        default_name = positive.strip().replace("\n", " ")[:40] or _("Untitled")
+        dialog = PromptSaveDialog(
+            self, _("Save prompt to library"), name=default_name, positive=positive
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name, saved_positive, category, tags = dialog.values()
+            root.prompts.create(name, saved_positive, category, tags)
 
     def _show_link_menu(self):
         active_layer = self._root.layers.active
