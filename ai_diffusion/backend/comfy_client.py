@@ -269,6 +269,17 @@ class ComfyClient(Client):
         async for __ in self.discover_models(refresh=True):
             pass
 
+    async def free_memory(self, timeout: float = 10):
+        try:
+            await self._requests.http(
+                "POST",
+                f"{self.url}/free",
+                {"unload_models": True, "free_memory": True},
+                timeout=timeout,
+            )
+        except Exception as e:
+            log.warning(f"Failed to free memory on {self.url}: {e!s}")
+
     async def _get(self, op: str, timeout: float | None = 60):
         return await self._requests.get(f"{self.url}/{op}", timeout=timeout)
 

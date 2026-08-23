@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -71,6 +72,7 @@ class SettingWidget(QWidget):
 
         self._key_label = QLabel(f"<b>{setting.name}</b><br>{setting.desc}")
         self._key_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._key_label.setWordWrap(True)
 
         self._checkbox: QCheckBox | None = None
         self._widget: QWidget | None = None
@@ -79,8 +81,7 @@ class SettingWidget(QWidget):
         self._show_label = True
         self._layout = QHBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.addWidget(self._key_label)
-        self._layout.addStretch(1)
+        self._layout.addWidget(self._key_label, 1)
         self.setLayout(self._layout)
         self._set_margins()
 
@@ -290,7 +291,13 @@ class ComboBoxSetting(SettingWidget):
     _enum_type = None
     _original_text = ""
 
-    def __init__(self, setting: Setting, model: QAbstractItemModel | None = None, parent=None):
+    def __init__(
+        self,
+        setting: Setting,
+        model: QAbstractItemModel | None = None,
+        parent=None,
+        editable=False,
+    ):
         super().__init__(setting, parent)
         self._combo = QComboBox(self)
         if model is not None:
@@ -303,6 +310,9 @@ class ComboBoxSetting(SettingWidget):
 
         self._combo.setMinimumWidth(230)
         self._combo.activated.connect(self._change_value)
+        if editable:
+            self._combo.setEditable(True)
+            self._combo.editTextChanged.connect(self._change_value)
         self.set_widget(self._combo)
         self._original_text = self._key_label.text()
 
@@ -336,6 +346,8 @@ class ComboBoxSetting(SettingWidget):
     def value(self):
         if self._enum_type is not None:
             return self._enum_type[self._combo.currentData()]
+        elif self._combo.isEditable() and self._combo.currentIndex() == -1:
+            return self._combo.currentText()
         else:
             return self._combo.currentData()
 
@@ -344,7 +356,10 @@ class ComboBoxSetting(SettingWidget):
         if self._enum_type is not None:
             v = v.name
         index = self._combo.findData(v, Qt.ItemDataRole.UserRole)
-        self._combo.setCurrentIndex(index)
+        if index == -1 and self._combo.isEditable():
+            self._combo.setEditText(v)
+        else:
+            self._combo.setCurrentIndex(index)
 
 
 class TextSetting(SettingWidget):
@@ -390,6 +405,37 @@ class LineEditSetting(QWidget):
     @value.setter
     def value(self, v):
         self._edit.setText(v)
+
+
+class TextAreaSetting(QWidget):
+    value_changed = pyqtSignal()
+
+    def __init__(self, setting: Setting, parent=None, line_count=6):
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+        add_header(layout, setting)
+
+        self._edit = QPlainTextEdit(self)
+        self._edit.setTabChangesFocus(True)
+        fm = QFontMetrics(self._edit.font())
+        self._edit.setFixedHeight(fm.lineSpacing() * line_count + 10)
+        self._edit.textChanged.connect(self._change_value)
+        layout.addWidget(self._edit)
+
+    def _change_value(self):
+        self.value_changed.emit()
+
+    @property
+    def value(self):
+        return self._edit.toPlainText()
+
+    @value.setter
+    def value(self, v: str):
+        if v != self._edit.toPlainText():
+            self._edit.setPlainText(v)
 
 
 _default_switch_labels = (_("On"), _("Off"))

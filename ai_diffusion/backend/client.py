@@ -437,6 +437,9 @@ class Client(ABC):
     async def translate(self, text: str, lang: str) -> str:
         return text
 
+    async def free_memory(self, timeout: float = 10):
+        """Best-effort hint to unload models and free VRAM. No-op unless overridden."""
+
     async def disconnect(self):
         pass
 

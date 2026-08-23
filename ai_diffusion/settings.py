@@ -9,6 +9,7 @@ from typing import Any, ClassVar, NamedTuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from .backend.llm_client import LlmBackend
 from .localization import translate as _
 from .platform_tools import is_macos, is_windows
 from .util import client_logger as log
@@ -214,6 +215,69 @@ class Settings(QObject):
 
     check_server_resources: bool
     _check_server_resources = Setting("Refuse connection if nodes or models are missing", True)
+
+    enhancer_enabled: bool
+    _enhancer_enabled = Setting(
+        _("Enable Prompt Enhancer"),
+        False,
+        _("Rewrite prompts with the help of a connected language model"),
+    )
+
+    enhancer_backend: LlmBackend
+    _enhancer_backend = Setting(_("Prompt Enhancer Backend"), LlmBackend.ollama)
+
+    enhancer_url: str
+    _enhancer_url = Setting(
+        _("Prompt Enhancer URL"),
+        "",
+        _(
+            "URL of the Ollama or OpenAI-compatible server. Leave empty to use the default for the selected backend."
+        ),
+    )
+
+    enhancer_api_key: str
+    _enhancer_api_key = Setting(
+        _("Prompt Enhancer API Key"),
+        "",
+        _("Stored in plain text in settings.json - only needed for cloud-hosted endpoints"),
+    )
+
+    enhancer_model: str
+    _enhancer_model = Setting(_("Prompt Enhancer Model"), "")
+
+    enhancer_timeout: int
+    _enhancer_timeout = Setting(
+        _("Prompt Enhancer Timeout"), 120, _("Maximum time in seconds to wait for a response")
+    )
+
+    enhancer_ollama_keep_alive: str
+    _enhancer_ollama_keep_alive = Setting(
+        _("Ollama Keep-Alive"),
+        "",
+        _(
+            "How long Ollama keeps the model loaded in VRAM after a request. Leave empty for the"
+            " server default (usually 5 minutes), use '0' to unload immediately, or '-1' to keep"
+            " it loaded indefinitely."
+        ),
+    )
+
+    enhancer_free_comfy_vram: bool
+    _enhancer_free_comfy_vram = Setting(
+        _("Free ComfyUI VRAM Before Enhancing"),
+        False,
+        _(
+            "Ask the ComfyUI server to unload its models before sending a request to the Prompt"
+            " Enhancer. Useful when running a local LLM on the same GPU. Adds a short delay to"
+            " each request."
+        ),
+    )
+
+    enhancer_free_comfy_vram_timeout: int
+    _enhancer_free_comfy_vram_timeout = Setting(
+        _("Free ComfyUI VRAM Timeout"),
+        10,
+        _("Maximum time in seconds to wait for ComfyUI to unload its models"),
+    )
 
     selection_feather: int
     _selection_feather = Setting(
