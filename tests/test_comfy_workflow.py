@@ -3,7 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from ai_diffusion.backend.comfy_workflow import ComfyObjectInfo, ComfyWorkflow
+from ai_diffusion.backend.comfy_workflow import (
+    ComfyObjectInfo,
+    ComfyWorkflow,
+    ConditioningOutput,
+    LanPaintSettings,
+    Output,
+)
+from ai_diffusion.backend.resources import Arch
 
 
 @pytest.fixture(scope="module")
@@ -112,3 +119,41 @@ def test_defaults_legacy_combo(info: ComfyObjectInfo):
     assert inputs["images"] == "img"
     assert inputs["format"] == "PNG"
     assert set(inputs.keys()) == {"images", "format"}
+
+
+def _node_types(w: ComfyWorkflow) -> set[str]:
+    return {node["class_type"] for node in w.root.values()}
+
+
+def test_sampler_custom_advanced_without_lanpaint(info: ComfyObjectInfo):
+    w = ComfyWorkflow(node_defs=info)
+    model = Output(0, 0)
+    cond = ConditioningOutput(Output(1, 0), Output(1, 1))
+    latent = Output(2, 0)
+
+    w.sampler_custom_advanced(model, cond, latent, Arch.sd15)
+
+    types = _node_types(w)
+    assert "SamplerCustomAdvanced" in types
+    assert "LanPaint_SamplerCustomAdvanced" not in types
+
+
+def test_sampler_custom_advanced_with_lanpaint(info: ComfyObjectInfo):
+    w = ComfyWorkflow(node_defs=info)
+    model = Output(0, 0)
+    cond = ConditioningOutput(Output(1, 0), Output(1, 1))
+    latent = Output(2, 0)
+
+    w.sampler_custom_advanced(model, cond, latent, Arch.sd15, lanpaint=LanPaintSettings())
+
+    types = _node_types(w)
+    assert "LanPaint_SamplerCustomAdvanced" in types
+    assert "SamplerCustomAdvanced" not in types
+
+    lanpaint_node = next(
+        node for node in w.root.values() if node["class_type"] == "LanPaint_SamplerCustomAdvanced"
+    )
+    assert lanpaint_node["inputs"]["LanPaint_NumSteps"] == 5
+    assert lanpaint_node["inputs"]["LanPaint_Lambda"] == 5.0
+    assert lanpaint_node["inputs"]["LanPaint_StepSize"] == 0.2
+    assert lanpaint_node["inputs"]["LanPaint_PromptMode"] == "Image First"

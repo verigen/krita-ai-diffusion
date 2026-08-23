@@ -1009,6 +1009,15 @@ class DocumentModel(QObject, ObservableProperties):
         return resolve_arch(self.active_style, self._connection.client_if_connected)
 
     @property
+    def supports_lanpaint_inpaint(self):
+        client = self._connection.client_if_connected
+        return (
+            settings.inpaint_lanpaint
+            and client is not None
+            and "LanPaint_SamplerCustomAdvanced" in client.models.node_inputs
+        )
+
+    @property
     def history(self):
         return (job for job in self.jobs if job.state is JobState.finished)
 

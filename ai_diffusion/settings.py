@@ -256,6 +256,17 @@ class Settings(QObject):
         _("NSFW Filter"), 0.0, _("Attempt to filter out images with explicit content")
     )
 
+    inpaint_lanpaint: bool
+    _inpaint_lanpaint = Setting(
+        _("Use LanPaint for inpainting when no native inpaint model is available"),
+        False,
+        _(
+            "Experimental. Requires the LanPaint custom node package on your ComfyUI"
+            " server. Improves 'Seamless' blending for models without built-in inpaint"
+            " support (eg. Krea 2)."
+        ),
+    )
+
     new_seed_after_apply: bool
     _new_seed_after_apply = Setting(
         _("Live: New Seed after Apply"),

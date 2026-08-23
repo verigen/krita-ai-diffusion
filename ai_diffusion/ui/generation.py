@@ -661,7 +661,11 @@ class CustomInpaintWidget(QWidget):
     def update_widgets_enabled(self):
         arch = self._model.arch
         self.fill_mode_combo.setEnabled(self.model.strength == 1.0 and not self.model.is_editing)
-        self.use_inpaint_button.setEnabled(arch.is_sdxl_like or arch.has_controlnet_inpaint)
+        self.use_inpaint_button.setEnabled(
+            arch.is_sdxl_like
+            or arch.has_controlnet_inpaint
+            or self._model.supports_lanpaint_inpaint
+        )
         self.use_prompt_focus_button.setVisible(arch is Arch.sd15 or arch.is_sdxl_like)
         self.edit_mode_switch.setEnabled(self.model.can_toggle_edit)
 

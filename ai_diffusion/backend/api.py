@@ -198,6 +198,7 @@ class WorkflowInput:
     batch_count: int = 1
     color_match: float = 0.0
     nsfw_filter: float = 0.0
+    use_lanpaint: bool = False
     custom_workflow: CustomWorkflowInput | None = None
 
     @property

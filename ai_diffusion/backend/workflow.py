@@ -45,6 +45,7 @@ from .comfy_workflow import (
     ComfyWorkflow,
     ConditioningOutput,
     Input,
+    LanPaintSettings,
     Output,
 )
 from .resolution import ScaledExtent, ScaleMode, TileLayout, get_inpaint_reference
@@ -870,6 +871,7 @@ class MiscParams(NamedTuple):
     layer_count: int
     color_match: float
     nsfw_filter: float
+    use_lanpaint: bool
 
 
 def generate(
@@ -1071,12 +1073,29 @@ def inpaint(
         w, model, prompt, cond_base.all_control, extent.initial, vae, models
     )
 
+    # is_inpaint_model is true for any arch without a dedicated ControlNet-inpaint
+    # model attached, including archs that have no native inpaint conditioning
+    # support at all (eg. Krea 2) - those need to be routed to LanPaint instead of
+    # the generic vae_encode_inpaint_conditioning path below, which is a no-op for
+    # them (their ComfyUI model class doesn't read the extra concat conditioning).
+    use_lanpaint = (
+        params.use_inpaint_model
+        and not (models.arch.is_sdxl_like or models.arch.has_controlnet_inpaint)
+        and misc.use_lanpaint
+        and "LanPaint_SamplerCustomAdvanced" in models.node_inputs
+    )
+    lanpaint_params = None
     if params.use_inpaint_model and models.arch is Arch.sdxl:
         prompt, latent_inpaint, latent = w.vae_encode_inpaint_conditioning(
             vae, in_image, inpaint_mask, prompt
         )
         inpaint_patch = w.load_fooocus_inpaint(**models.fooocus_inpaint)
         inpaint_model = w.apply_fooocus_inpaint(model, inpaint_patch, latent_inpaint)
+    elif use_lanpaint:
+        latent = vae_encode(w, vae, in_image, checkpoint.tiled_vae)
+        latent = w.set_latent_noise_mask(latent, inpaint_mask)
+        inpaint_model = model
+        lanpaint_params = LanPaintSettings()
     elif is_inpaint_model:
         prompt, latent_inpaint, latent = w.vae_encode_inpaint_conditioning(
             vae, in_image, inpaint_mask, prompt
@@ -1094,7 +1113,7 @@ def inpaint(
     latent = w.batch_latent(latent, misc.batch_count)
     sampler_params = _sampler_params(sampling, extent.initial)
     out_latent = w.sampler_custom_advanced(
-        inpaint_model, prompt, latent, models.arch, **sampler_params
+        inpaint_model, prompt, latent, models.arch, lanpaint=lanpaint_params, **sampler_params
     )
 
     if extent.refinement_scaling in [ScaleMode.upscale_small, ScaleMode.upscale_quality]:
@@ -1130,7 +1149,7 @@ def inpaint(
             w, model, prompt_up, cond_upscale.all_control, shape, vae, models
         )
         out_latent = w.sampler_custom_advanced(
-            model, prompt_up, latent, models.arch, **sampler_params
+            model, prompt_up, latent, models.arch, lanpaint=lanpaint_params, **sampler_params
         )
         out_image = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
         input_cropped = w.crop_image(in_image, initial_bounds)
@@ -1221,6 +1240,20 @@ def refine_region(
     if inpaint.use_inpaint_model and models.control.find(ControlMode.inpaint) is not None:
         cond.control.append(inpaint_control(in_image, initial_mask, models.arch))
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.initial, vae, models)
+    controlnet_inpaint_attached = models.control.find(ControlMode.inpaint) is not None
+    # Same scope as inpaint(): only architectures with no dedicated native inpaint
+    # capability at all (eg. Krea 2) get routed to LanPaint. Archs with
+    # has_controlnet_inpaint (flux/zimage/anima/qwen/sd15) are left untouched here,
+    # even though this function gives them no native treatment either - that's a
+    # separate pre-existing gap, out of scope for this change.
+    use_lanpaint = (
+        inpaint.use_inpaint_model
+        and not (models.arch.is_sdxl_like or models.arch.has_controlnet_inpaint)
+        and not controlnet_inpaint_attached
+        and misc.use_lanpaint
+        and "LanPaint_SamplerCustomAdvanced" in models.node_inputs
+    )
+    lanpaint_params = None
     if inpaint.use_inpaint_model and models.arch is Arch.sdxl:
         prompt, latent_inpaint, latent = w.vae_encode_inpaint_conditioning(
             vae, in_image, initial_mask, prompt
@@ -1234,11 +1267,13 @@ def refine_region(
         )
         latent = w.set_latent_noise_mask(latent, initial_mask)
         inpaint_model = model
+        if use_lanpaint:
+            lanpaint_params = LanPaintSettings()
 
     latent = w.batch_latent(latent, misc.batch_count)
     sampler_params = _sampler_params(sampling, extent.initial)
     out_latent = w.sampler_custom_advanced(
-        inpaint_model, prompt, latent, models.arch, **sampler_params
+        inpaint_model, prompt, latent, models.arch, lanpaint=lanpaint_params, **sampler_params
     )
     out_image = scale_refine_and_decode(
         extent, w, cond, sampling, out_latent, model_orig, clip, vae, models, checkpoint.tiled_vae
@@ -1760,6 +1795,7 @@ def prepare(
     i.images.layer_count = layer_count if arch is Arch.qwen_l else 1
     i.color_match = 1.0 if settings.color_match else 0.0
     i.nsfw_filter = settings.nsfw_filter
+    i.use_lanpaint = settings.inpaint_lanpaint
     return i
 
 
@@ -1795,7 +1831,7 @@ def create(i: WorkflowInput, models: ClientModels, comfy_mode=ComfyRunMode.serve
     """
     workflow = ComfyWorkflow(models.node_inputs, comfy_mode)
     layer_count = i.images.layer_count if i.images else 1
-    misc = MiscParams(i.batch_count, layer_count, i.color_match, i.nsfw_filter)
+    misc = MiscParams(i.batch_count, layer_count, i.color_match, i.nsfw_filter, i.use_lanpaint)
 
     if i.kind is WorkflowKind.generate:
         return generate(

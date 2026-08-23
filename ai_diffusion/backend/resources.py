@@ -75,6 +75,13 @@ optional_custom_nodes = [
         "90999af9c26e4a40927fb26c028ece8875ac25b3",
         ["NunchakuFluxDiTLoader"],
     ),
+    CustomNode(
+        "LanPaint",
+        "LanPaint",
+        "https://github.com/scraed/LanPaint",
+        "32cf848e93971da380d868936e007f5611218bee",
+        ["LanPaint_SamplerCustomAdvanced"],
+    ),
 ]
 
 

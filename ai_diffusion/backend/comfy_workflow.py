@@ -36,6 +36,18 @@ class ConditioningOutput(NamedTuple):
     negative: Output
 
 
+class LanPaintSettings(NamedTuple):
+    """Parameters for the optional LanPaint_SamplerCustomAdvanced node.
+
+    See https://github.com/scraed/LanPaint - defaults match upstream's own.
+    """
+
+    num_steps: int = 5
+    strength: float = 5.0  # LanPaint "Lambda": bidirectional guidance scale
+    step_size: float = 0.2
+    prompt_mode: str = "Image First"
+
+
 class ComfyNode(NamedTuple):
     id: int
     type: str
@@ -350,6 +362,7 @@ class ComfyWorkflow:
         cfg=7.0,
         seed=-1,
         extent: Extent | None = None,
+        lanpaint: LanPaintSettings | None = None,
     ):
         self.sample_count += steps - start_at_step
 
@@ -365,15 +378,24 @@ class ComfyWorkflow:
         if start_at_step > 0:
             _, sigmas = self.split_sigmas(sigmas, start_at_step)
 
-        return self.add(
-            "SamplerCustomAdvanced",
-            output_count=2,
+        kwargs: dict[str, Any] = dict(
             noise=self.random_noise(seed),
             guider=guider,
             sampler=self.sampler_select(sampler),
             sigmas=sigmas,
             latent_image=latent_image,
-        )[1]
+        )
+        if lanpaint is not None:
+            return self.add(
+                "LanPaint_SamplerCustomAdvanced",
+                output_count=2,
+                **kwargs,
+                LanPaint_NumSteps=lanpaint.num_steps,
+                LanPaint_Lambda=lanpaint.strength,
+                LanPaint_StepSize=lanpaint.step_size,
+                LanPaint_PromptMode=lanpaint.prompt_mode,
+            )[1]
+        return self.add("SamplerCustomAdvanced", output_count=2, **kwargs)[1]
 
     def scheduler_sigmas(
         self,

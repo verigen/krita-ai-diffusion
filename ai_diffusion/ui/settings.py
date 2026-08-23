@@ -684,14 +684,20 @@ class DiffusionSettings(SettingsTab):
         self.add("selection_padding", SliderSetting(S._selection_padding, self, 0, 25, "{} %"))
         self.add("color_match", SwitchSetting(S._color_match, parent=self))
         self.add("nsfw_filter", ComboBoxSetting(S._nsfw_filter, parent=self))
+        self.add("inpaint_lanpaint", SwitchSetting(S._inpaint_lanpaint, parent=self))
 
         nsfw_settings = [(_("Disabled"), 0.0), (_("Basic"), 0.65), (_("Strict"), 0.8)]
         self._widgets["nsfw_filter"].set_items(nsfw_settings)
         DiffusionSettings._warning_shown = self._warning_shown or settings.nsfw_filter > 0
+        self.update_lanpaint(root.connection.client_if_connected)
 
         self._layout.addStretch()
 
     _warning_shown = False
+
+    def update_lanpaint(self, client: Client | None):
+        available = client is not None and "LanPaint_SamplerCustomAdvanced" in client.models.node_inputs
+        self._widgets["inpaint_lanpaint"].enabled = available
 
     def _write(self):
         if self._widgets["nsfw_filter"].value > 0 and not self._warning_shown:
@@ -1257,6 +1263,7 @@ class SettingsDialog(QDialog):
         if root.connection.state is ConnectionState.connected:
             self.interface.update_translation(root.connection.client)
             self.performance.update_client_info()
+            self.diffusion.update_lanpaint(root.connection.client)
 
     def _open_settings_folder(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(util.user_data_dir)))
