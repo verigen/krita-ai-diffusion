@@ -1149,7 +1149,7 @@ def inpaint(
             w, model, prompt_up, cond_upscale.all_control, shape, vae, models
         )
         out_latent = w.sampler_custom_advanced(
-            model, prompt_up, latent, models.arch, lanpaint=lanpaint_params, **sampler_params
+            model, prompt_up, latent, models.arch, **sampler_params
         )
         out_image = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
         input_cropped = w.crop_image(in_image, initial_bounds)
