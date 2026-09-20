@@ -524,10 +524,16 @@ def encode_prompt_qwen21(
     if cond.positive.language:
         positive = w.translate(positive)
         negative = w.translate(negative) if negative else negative
-    positive_out, negative_out, _latent = w.text_encode_qwen_image_21(
+    positive_out, negative_out, latent_out = w.text_encode_qwen_image_21(
         clip.model, vae, ref_images, positive, negative
     )
-    return ConditioningOutput(positive_out, negative_out)
+    # With reference images, TextEncodeQwenImage21 emits an empty latent matched to the
+    # first reference image's size. Sampling with any other size misaligns the edit (this
+    # is not a resolution *preference*, it's required - see the official
+    # image_qwen_image_2_1_image_edit template, which switches KSampler's latent_image
+    # between this output and a plain EmptyLatentImage based on whether images are present).
+    latent = latent_out if len(ref_images) > 0 else None
+    return ConditioningOutput(positive_out, negative_out, latent)
 
 
 def apply_attention_mask(
@@ -800,6 +806,8 @@ def scale(
         ratio = target.pixel_count / extent.pixel_count
         factor = max(2, min(4, math.ceil(math.sqrt(ratio))))
         upscale_model = w.load_upscale_model(models.upscale[UpscalerName.fast_x(factor)])
+        if models.arch is Arch.qwen21:
+            image = w.ensure_rgb(image, extent)
         image = w.upscale_image(upscale_model, image)
         return w.scale_image(image, target)
 
@@ -853,6 +861,8 @@ def scale_refine_and_decode(
 
     upscale_model = w.load_upscale_model(upscaler)
     decoded = vae_decode(w, vae, latent, tiled_vae)
+    if arch is Arch.qwen21:
+        decoded = w.ensure_rgb(decoded, extent.initial)
     upscale = w.upscale_image(upscale_model, decoded)
     upscale = w.scale_image(upscale, extent.desired)
     latent = vae_encode(w, vae, upscale, tiled_vae)
@@ -894,8 +904,11 @@ def generate(
     model_orig = copy(model)
     model, regions = apply_attention_mask(w, model, cond, clip, extent.initial)
     model = apply_regional_ip_adapter(w, model, cond.regions, extent.initial, models)
-    latent = w.empty_latent_image(extent.initial, models.arch, misc.batch_count)
     prompt = encode_prompt(w, cond, clip, regions, vae)
+    if prompt.latent is not None:  # Qwen-Image 2.1 edit: latent must match the reference image
+        latent = w.batch_latent(prompt.latent, misc.batch_count)
+    else:
+        latent = w.empty_latent_image(extent.initial, models.arch, misc.batch_count)
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.initial, vae, models)
     prompt = apply_reference_conditioning(
         w, prompt, None, None, cond, vae, models.arch, checkpoint.tiled_vae
@@ -1134,6 +1147,8 @@ def inpaint(
         sampler_params = _sampler_params(sampling, upscale_extent.desired, strength=0.4)
         upscale_model = w.load_upscale_model(upscaler)
         upscale = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
+        if models.arch is Arch.qwen21:
+            upscale = w.ensure_rgb(upscale, extent.initial)
         upscale = w.crop_image(upscale, initial_bounds)
         upscale = ensure_minimum_extent(w, upscale, initial_bounds.extent, 32)
         upscale = w.upscale_image(upscale_model, upscale)
@@ -1158,6 +1173,8 @@ def inpaint(
             model, prompt_up, latent, models.arch, **sampler_params
         )
         out_image = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
+        if models.arch is Arch.qwen21:
+            out_image = w.ensure_rgb(out_image, upscale_extent.desired)
         input_cropped = w.crop_image(in_image, initial_bounds)
         out_image = w.color_match(out_image, input_cropped, upscale_mask, misc.color_match)
         out_image = scale_to_target(upscale_extent, w, out_image, models)
@@ -1168,6 +1185,8 @@ def inpaint(
             desired_extent, desired_extent, desired_extent, target_bounds.extent
         )
         out_image = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
+        if models.arch is Arch.qwen21:
+            out_image = w.ensure_rgb(out_image, extent.initial)
         out_image = w.color_match(out_image, in_image, inpaint_mask, misc.color_match)
         out_image = scale(
             extent.initial, extent.desired, extent.refinement_scaling, w, out_image, models
@@ -1284,6 +1303,8 @@ def refine_region(
     out_image = scale_refine_and_decode(
         extent, w, cond, sampling, out_latent, model_orig, clip, vae, models, checkpoint.tiled_vae
     )
+    if models.arch is Arch.qwen21:
+        out_image = w.ensure_rgb(out_image, extent.desired)
     out_image = w.color_match(out_image, in_image, initial_mask, misc.color_match)
     out_image = w.nsfw_filter(out_image, sensitivity=misc.nsfw_filter)
     out_image = scale_to_target(extent, w, out_image, models)

@@ -34,6 +34,10 @@ Input = int | float | bool | str | Output
 class ConditioningOutput(NamedTuple):
     positive: Output
     negative: Output
+    # Set only by TextEncodeQwenImage21 when reference images are attached: an empty latent
+    # sized to match the first reference image, required for correct spatial alignment of the
+    # edit (see encode_prompt_qwen21).
+    latent: Output | None = None
 
 
 class LanPaintSettings(NamedTuple):
@@ -725,13 +729,15 @@ class ComfyWorkflow:
         negative_prompt: str | Output,
         resolution: int = 0,
     ):
-        # `images` is a ComfyUI Autogrow input: the node's execute() receives it as a single
-        # dict {"image_1": ..., "image_2": ...}, not as separate top-level "image_1" kwargs.
-        kwargs = {}
-        if images:
-            kwargs["images"] = {
-                f"image_{i + 1}": [str(img.node), img.output] for i, img in enumerate(images[:16])
-            }
+        # `images` is a ComfyUI Autogrow input (COMFY_AUTOGROW_V3): server-side, each slot is
+        # a flat, dot-prefixed top-level input key - "images.image_1", "images.image_2", ...
+        # (see comfy_api/latest/_io.py: Autogrow._expand_schema_for_dynamic uses
+        # finalize_prefix(["images"], name) = f"images.{name}" as the *only* key the executor
+        # recognizes; it reassembles these into the `images` dict `execute()` receives via
+        # build_nested_inputs). Neither a nested {"images": {...}} dict nor bare "image_1"
+        # keys are matched by that lookup - both are silently ignored, and the reference
+        # images never reach the node.
+        kwargs = {f"images.image_{i + 1}": img for i, img in enumerate(images[:16])}
         return self.add(
             "TextEncodeQwenImage21",
             3,
@@ -1072,6 +1078,13 @@ class ComfyWorkflow:
     def upscale_image(self, upscale_model: Output, image: Output):
         self.sample_count += 4  # approx, actual number depends on model and image size
         return self.add("ImageUpscaleWithModel", 1, upscale_model=upscale_model, image=image)
+
+    def ensure_rgb(self, image: Output, extent: Extent):
+        # Upscale models are RGB-only. Compositing onto an opaque background drops any
+        # alpha channel (eg. from the Qwen-Image 2.1 VAE, which decodes to RGBA) - see
+        # node_helpers.image_alpha_fix, used by ImageCompositeMasked.
+        background = self.empty_image(extent)
+        return self.composite_image_masked(image, background, None)
 
     def invert_image(self, image: Output):
         return self.add("ImageInvert", 1, image=image)
