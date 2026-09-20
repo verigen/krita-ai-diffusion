@@ -482,11 +482,22 @@ def encode_prompt(
     vae: Output,
     image: Output | None = None,
 ):
-    ref_images = [image] if image is not None else []
-    ref_images += [c.image.load(w) for c in cond.all_control if c.mode.is_ip_adapter]
+    control_ref_images = [c.image.load(w) for c in cond.all_control if c.mode.is_ip_adapter]
 
     if clip.arch is Arch.qwen21:
-        return encode_prompt_qwen21(w, cond, clip, ref_images, vae)
+        # Unlike explicit "reference" control layers, `image` here is the canvas/selection
+        # content passed by refine/inpaint for plain strength-based regeneration - attaching
+        # it as an edit reference (as opposed to just the noisy sampling latent) anchors the
+        # output to it regardless of denoise strength. Only attach it when this is actually
+        # an edit-instruction generation, matching how apply_reference_conditioning gates
+        # input_image/input_latent for every other edit-capable arch.
+        qwen_ref_images = control_ref_images.copy()
+        if cond.edit_reference and image is not None:
+            qwen_ref_images.insert(0, image)
+        return encode_prompt_qwen21(w, cond, clip, qwen_ref_images, vae)
+
+    ref_images = [image] if image is not None else []
+    ref_images += control_ref_images
 
     if len(cond.regions) <= 1 or all(len(r.loras) == 0 for r in cond.regions):
         positive = cond.positive.encode(w, clip, cond.style_prompt, ref_images)
