@@ -145,6 +145,13 @@ def test_preferred_style():
     assert style.preferred_checkpoint(checkpoints) == "cats"
 
 
+def test_preferred_style_subfolder():
+    checkpoints = ["QwenImage2.1/qwen_image_2.1_int8_convrot.safetensors", "birds"]
+    style = Style(Path("test_style.json"))
+    style.checkpoints = ["qwen_image_2.1_int8_convrot.safetensors"]
+    assert style.preferred_checkpoint(checkpoints) == "QwenImage2.1/qwen_image_2.1_int8_convrot.safetensors"
+
+
 def test_default_style(tmp_path_factory):
     styles = Styles(tmp_path_factory.mktemp("builtin"), tmp_path_factory.mktemp("user"))
     style = styles.default

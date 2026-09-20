@@ -725,7 +725,13 @@ class ComfyWorkflow:
         negative_prompt: str | Output,
         resolution: int = 0,
     ):
-        kwargs = {f"image_{i + 1}": img for i, img in enumerate(images[:16])}
+        # `images` is a ComfyUI Autogrow input: the node's execute() receives it as a single
+        # dict {"image_1": ..., "image_2": ...}, not as separate top-level "image_1" kwargs.
+        kwargs = {}
+        if images:
+            kwargs["images"] = {
+                f"image_{i + 1}": [str(img.node), img.output] for i, img in enumerate(images[:16])
+            }
         return self.add(
             "TextEncodeQwenImage21",
             3,
