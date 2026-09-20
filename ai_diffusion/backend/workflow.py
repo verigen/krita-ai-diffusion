@@ -156,6 +156,8 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
                 clip = w.t5_tokenizer_options(clip, min_padding=1, min_length=0)
             case Arch.qwen | Arch.qwen_e | Arch.qwen_e_p | Arch.qwen_l:
                 clip = w.load_clip(te["qwen"], type="qwen_image")
+            case Arch.qwen21:
+                clip = w.load_clip(te["qwen_3vl_8b"], type="qwen_image")
             case Arch.anima:
                 clip = w.load_clip(te["qwen_3_06b"], type="omnigen2")
             case Arch.zimage:
@@ -477,10 +479,14 @@ def encode_prompt(
     cond: Conditioning,
     clip: Clip,
     regions: Output | None,
+    vae: Output,
     image: Output | None = None,
 ):
     ref_images = [image] if image is not None else []
     ref_images += [c.image.load(w) for c in cond.all_control if c.mode.is_ip_adapter]
+
+    if clip.arch is Arch.qwen21:
+        return encode_prompt_qwen21(w, cond, clip, ref_images, vae)
 
     if len(cond.regions) <= 1 or all(len(r.loras) == 0 for r in cond.regions):
         positive = cond.positive.encode(w, clip, cond.style_prompt, ref_images)
@@ -506,6 +512,22 @@ def encode_prompt(
 
     assert positive is not None and negative is not None
     return ConditioningOutput(positive, negative)
+
+
+def encode_prompt_qwen21(
+    w: ComfyWorkflow, cond: Conditioning, clip: Clip, ref_images: list[Output], vae: Output
+):
+    positive = cond.positive.text
+    if positive != "" and cond.style_prompt:
+        positive = merge_prompt(positive, cond.style_prompt, cond.positive.language)
+    negative = cond.negative.text if cond.negative else ""
+    if cond.positive.language:
+        positive = w.translate(positive)
+        negative = w.translate(negative) if negative else negative
+    positive_out, negative_out, _latent = w.text_encode_qwen_image_21(
+        clip.model, vae, ref_images, positive, negative
+    )
+    return ConditioningOutput(positive_out, negative_out)
 
 
 def apply_attention_mask(
@@ -751,6 +773,9 @@ def apply_reference_conditioning(
                 prompt = add_ref(prompt, latent)
             elif cond.edit_reference and input_latent:
                 prompt = add_ref(prompt, input_latent)
+        # Arch.qwen21 intentionally has no case: TextEncodeQwenImage21 already attaches
+        # reference_latents internally (see encode_prompt_qwen21), adding ReferenceLatent
+        # nodes here would double-apply them.
 
     return prompt
 
@@ -833,7 +858,7 @@ def scale_refine_and_decode(
     latent = vae_encode(w, vae, upscale, tiled_vae)
     params = _sampler_params(sampling, extent.desired, strength=0.4)
 
-    prompt = encode_prompt(w, cond, clip, regions)
+    prompt = encode_prompt(w, cond, clip, regions, vae)
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.desired, vae, models)
     prompt = apply_reference_conditioning(w, prompt, upscale, latent, cond, vae, arch, tiled_vae)
     result = w.sampler_custom_advanced(model, prompt, latent, arch, **params)
@@ -870,7 +895,7 @@ def generate(
     model, regions = apply_attention_mask(w, model, cond, clip, extent.initial)
     model = apply_regional_ip_adapter(w, model, cond.regions, extent.initial, models)
     latent = w.empty_latent_image(extent.initial, models.arch, misc.batch_count)
-    prompt = encode_prompt(w, cond, clip, regions)
+    prompt = encode_prompt(w, cond, clip, regions, vae)
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.initial, vae, models)
     prompt = apply_reference_conditioning(
         w, prompt, None, None, cond, vae, models.arch, checkpoint.tiled_vae
@@ -1049,7 +1074,7 @@ def inpaint(
 
     model = apply_ip_adapter(w, model, cond_base.control, models)
     model = apply_regional_ip_adapter(w, model, cond_base.regions, extent.initial, models)
-    prompt = encode_prompt(w, cond_base, clip, regions)
+    prompt = encode_prompt(w, cond_base, clip, regions, vae)
     model, prompt = apply_control(
         w, model, prompt, cond_base.all_control, extent.initial, vae, models
     )
@@ -1121,7 +1146,7 @@ def inpaint(
 
         model, regions = apply_attention_mask(w, model, cond_upscale, clip, shape)
         model = apply_regional_ip_adapter(w, model, cond_upscale.regions, shape, models)
-        prompt_up = encode_prompt(w, cond_upscale, clip, regions)
+        prompt_up = encode_prompt(w, cond_upscale, clip, regions, vae)
 
         if params.use_inpaint_model and models.control.find(ControlMode.inpaint) is not None:
             hires_image = ImageOutput(images.hires_image)
@@ -1176,7 +1201,7 @@ def refine(
     latent = vae_encode(w, vae, in_image, checkpoint.tiled_vae)
     latent_batch = w.batch_latent(latent, misc.batch_count)
     latent_batch = setup_latent_layers(w, latent_batch, extent.desired, misc.layer_count)
-    prompt = encode_prompt(w, cond, clip, regions, in_image)
+    prompt = encode_prompt(w, cond, clip, regions, vae, in_image)
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.desired, vae, models)
     prompt = apply_reference_conditioning(
         w, prompt, in_image, latent, cond, vae, models.arch, checkpoint.tiled_vae
@@ -1216,7 +1241,7 @@ def refine_region(
     in_mask = apply_grow_feather(w, in_mask, inpaint)
     initial_mask = scale_to_initial(extent, w, in_mask, models, is_mask=True)
 
-    prompt = encode_prompt(w, cond, clip, regions, in_image)
+    prompt = encode_prompt(w, cond, clip, regions, vae, in_image)
 
     if inpaint.use_inpaint_model and models.control.find(ControlMode.inpaint) is not None:
         cond.control.append(inpaint_control(in_image, initial_mask, models.arch))
@@ -1414,7 +1439,7 @@ def upscale_tiled(
         tile_cond.regions = [r for r in regions if r is not None]
         tile_model, regions = apply_attention_mask(w, model, tile_cond, clip)
         tile_model = apply_regional_ip_adapter(w, tile_model, tile_cond.regions, no_reshape, models)
-        prompt = encode_prompt(w, tile_cond, clip, regions)
+        prompt = encode_prompt(w, tile_cond, clip, regions, vae)
 
         control = [tiled_control(c, i) for c in tile_cond.all_control]
         tile_model, prompt = apply_control(w, tile_model, prompt, control, no_reshape, vae, models)
@@ -1608,6 +1633,7 @@ def prepare_prompts(
         Arch.flux2_4b: "image {}",
         Arch.flux2_9b: "image {}",
         Arch.qwen_e_p: "Picture {}",
+        Arch.qwen21: "<image{}>",
     }.get(arch, "")
 
     cond.style = style.style_prompt

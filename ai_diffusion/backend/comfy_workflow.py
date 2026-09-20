@@ -716,6 +716,27 @@ class ComfyWorkflow:
             prompt=prompt,
         )
 
+    def text_encode_qwen_image_21(
+        self,
+        clip: Output,
+        vae: Output,
+        images: list[Output],
+        prompt: str | Output,
+        negative_prompt: str | Output,
+        resolution: int = 0,
+    ):
+        kwargs = {f"image_{i + 1}": img for i, img in enumerate(images[:16])}
+        return self.add(
+            "TextEncodeQwenImage21",
+            3,
+            clip=clip,
+            vae=vae,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            resolution=resolution,
+            **kwargs,
+        )
+
     def background_region(self, conditioning: Output):
         return self.add("ETN_BackgroundRegion", 1, conditioning=conditioning)
 
