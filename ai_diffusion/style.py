@@ -211,10 +211,23 @@ class Style(QObject):
         def sanitize(p):
             return p.replace("\\", "/").lower()
 
+        def basename(p):
+            return p.rsplit("/", 1)[-1]
+
         available = {sanitize(cp): cp for cp in available_checkpoints}
         for cp in self.checkpoints:
             if found := available.get(sanitize(cp)):
                 return found
+
+        # Fall back to matching by filename alone, in case the server reports the
+        # checkpoint from within a subfolder the style doesn't know about.
+        by_basename = {}
+        for key, cp in available.items():
+            by_basename.setdefault(basename(key), cp)
+        for cp in self.checkpoints:
+            if found := by_basename.get(basename(sanitize(cp))):
+                return found
+
         return "not-found"
 
     def get_models(self, available_checkpoints: Iterable[str]):

@@ -366,7 +366,7 @@ def test_prepare_wildcards():
     assert result.metadata["regions"][1].get("prompt_eval") is None
 
 
-@pytest.mark.parametrize("arch", [Arch.sd15, Arch.qwen_e_p])
+@pytest.mark.parametrize("arch", [Arch.sd15, Arch.qwen_e_p, Arch.qwen21])
 def test_prepare_prompt_layers(arch: Arch):
     files = FileLibrary(FileCollection(), FileCollection())
     mask = Mask.rectangle(Bounds(0, 0, 10, 10), Bounds(0, 0, 10, 10)).to_image()
@@ -391,11 +391,16 @@ def test_prepare_prompt_layers(arch: Arch):
     if arch is Arch.sd15:
         assert result.conditioning.positive == "prompt  for"
         assert result.metadata["prompt_final"] == f"prompt  for, {style.style_prompt}"
-    else:
+    elif arch is Arch.qwen_e_p:
         assert result.conditioning.positive == "prompt Picture 2 for Picture 3"
         assert (
             result.metadata["prompt_final"]
             == f"prompt Picture 2 for Picture 3, {style.style_prompt}"
+        )
+    else:
+        assert result.conditioning.positive == "prompt <image2> for <image3>"
+        assert (
+            result.metadata["prompt_final"] == f"prompt <image2> for <image3>, {style.style_prompt}"
         )
 
 
