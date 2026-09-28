@@ -29,6 +29,7 @@ from .animation import AnimationWidget
 from .custom_workflow import CustomWorkflowPlaceholder, CustomWorkflowWidget
 from .generation import GenerationWidget
 from .live import LiveWidget
+from .prompt_library import PromptLibraryWidget
 from .upscale import UpscaleWidget
 
 
@@ -287,6 +288,7 @@ class ImageDiffusionWidget(DockWidget):
         self._live = LiveWidget()
         self._custom = CustomWorkflowWidget()
         self._custom_placeholder = CustomWorkflowPlaceholder()
+        self._prompts = PromptLibraryWidget()
         self._frame = QStackedWidget(self)
         self._frame.addWidget(self._welcome)
         self._frame.addWidget(self._generation)
@@ -295,6 +297,7 @@ class ImageDiffusionWidget(DockWidget):
         self._frame.addWidget(self._animation)
         self._frame.addWidget(self._custom)
         self._frame.addWidget(self._custom_placeholder)
+        self._frame.addWidget(self._prompts)
         self.setWidget(self._frame)
 
         self._welcome.accepted.connect(self.update_content)
@@ -342,3 +345,6 @@ class ImageDiffusionWidget(DockWidget):
         elif model.workspace is Workspace.custom:
             self._custom.model = model
             self._frame.setCurrentWidget(self._custom)
+        elif model.workspace is Workspace.prompts:
+            self._prompts.model = model
+            self._frame.setCurrentWidget(self._prompts)

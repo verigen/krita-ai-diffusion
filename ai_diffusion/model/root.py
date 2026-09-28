@@ -17,6 +17,7 @@ from ..backend.server import Server, ServerState
 from ..document import Document, KritaDocument
 from ..files import File, FileFormat, FileLibrary, FileSource
 from ..persistence import ModelSync, RecentlyUsedSync, import_prompt_from_file
+from ..prompt_library import PromptLibrary
 from ..settings import ServerMode, settings
 from ..ui.theme import checkpoint_icon
 from ..util import client_logger as log
@@ -44,6 +45,7 @@ class Root(QObject):
         self._server = Server(settings.server_path)
         self._connection = Connection()
         self._files = FileLibrary.load()
+        self._prompts = PromptLibrary()
         self._workflows = WorkflowCollection(self._connection)
         self._models: list[Root.PerDocument] = []
         self._null_model = DocumentModel(Document(), self._connection, self._workflows)
@@ -94,6 +96,10 @@ class Root(QObject):
     @property
     def files(self) -> FileLibrary:
         return self._files
+
+    @property
+    def prompts(self) -> PromptLibrary:
+        return self._prompts
 
     @property
     def workflows(self) -> WorkflowCollection:
