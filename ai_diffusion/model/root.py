@@ -17,6 +17,7 @@ from ..backend.server import Server, ServerState
 from ..document import Document, KritaDocument
 from ..files import File, FileFormat, FileLibrary, FileSource
 from ..persistence import ModelSync, RecentlyUsedSync, import_prompt_from_file
+from ..prompt_enhancer import EnhancerPresets
 from ..prompt_library import PromptLibrary
 from ..settings import ServerMode, settings
 from ..ui.theme import checkpoint_icon
@@ -24,6 +25,7 @@ from ..util import client_logger as log
 from .connection import Connection, ConnectionState
 from .custom_workflow import WorkflowCollection
 from .model import DocumentModel
+from .prompt_enhancer import PromptEnhancer
 from .updates import AutoUpdate
 
 
@@ -46,6 +48,8 @@ class Root(QObject):
         self._connection = Connection()
         self._files = FileLibrary.load()
         self._prompts = PromptLibrary()
+        self._enhancer_presets = EnhancerPresets()
+        self._enhancer = PromptEnhancer(self._enhancer_presets, self._connection)
         self._workflows = WorkflowCollection(self._connection)
         self._models: list[Root.PerDocument] = []
         self._null_model = DocumentModel(Document(), self._connection, self._workflows)
@@ -100,6 +104,14 @@ class Root(QObject):
     @property
     def prompts(self) -> PromptLibrary:
         return self._prompts
+
+    @property
+    def enhancer_presets(self) -> EnhancerPresets:
+        return self._enhancer_presets
+
+    @property
+    def enhancer(self) -> PromptEnhancer:
+        return self._enhancer
 
     @property
     def workflows(self) -> WorkflowCollection:
@@ -237,7 +249,10 @@ def collect_diagnostics(redact_user=True):
     out += "-------------------------------------\n"
     out += "Settings:\n"
     for name, value in settings:
-        if name in ("access_token", "server_authorization") or value == settings.access_token:
+        if (
+            name in ("access_token", "server_authorization", "enhancer_api_key")
+            or value == settings.access_token
+        ):
             value = "<redacted>"
         out += f"  {name}: {value}\n"
     out += "-------------------------------------\n"
