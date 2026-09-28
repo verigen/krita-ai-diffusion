@@ -292,6 +292,10 @@ class UpscaleWidget(QWidget):
         else:
             self.strength_slider.setEnabled(True)
             self.strength_slider.setToolTip("")
+            if arch.supports_edit:
+                self.strength_slider.set_range(1, 100)
+            else:
+                self.strength_slider.set_range(20, 50)
             has_unblur = False
             if client := root.connection.client_if_connected:
                 models = client.models.for_arch(self.model.arch)

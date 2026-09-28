@@ -774,6 +774,10 @@ class StrengthWidget(QWidget):
         self._layout.addWidget(self._slider)
         self._layout.addWidget(self._input)
 
+    def set_range(self, min: int, max: int):
+        self._slider.setMinimum(min)
+        self._slider.setMaximum(max)
+
     def slider_changed(self, value: int):
         if self._input.snapping is not None:
             value = self._input.snapping.nearest_percent(value) or value

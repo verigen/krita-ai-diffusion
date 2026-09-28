@@ -1471,7 +1471,13 @@ def upscale_tiled(
         tile_cond.regions = [r for r in regions if r is not None]
         tile_model, regions = apply_attention_mask(w, model, tile_cond, clip)
         tile_model = apply_regional_ip_adapter(w, tile_model, tile_cond.regions, no_reshape, models)
-        prompt = encode_prompt(w, tile_cond, clip, regions, vae)
+        # Only qwen21 needs the tile image here: its encode_prompt_qwen21 path builds a
+        # fresh node per call. Other edit archs get their reference via
+        # apply_reference_conditioning below instead - passing an image here would hit
+        # TextPrompt.encode's cache, which is keyed on the (shared, uncopied) positive
+        # prompt object and would silently reuse tile 0's reference for every other tile.
+        ref_image = tile_image if models.arch is Arch.qwen21 else None
+        prompt = encode_prompt(w, tile_cond, clip, regions, vae, ref_image)
 
         control = [tiled_control(c, i) for c in tile_cond.all_control]
         tile_model, prompt = apply_control(w, tile_model, prompt, control, no_reshape, vae, models)
@@ -1486,6 +1492,8 @@ def upscale_tiled(
             tile_model, prompt, latent, models.arch, **sampler_params
         )
         tile_result = vae_decode(w, vae, sampler, checkpoint.tiled_vae)
+        if models.arch is Arch.qwen21:
+            tile_result = w.ensure_rgb(tile_result, bounds.extent)
         out_image = w.merge_image_tile(out_image, tile_layout, i, tile_result)
 
     out_image = w.nsfw_filter(out_image, sensitivity=misc.nsfw_filter)
