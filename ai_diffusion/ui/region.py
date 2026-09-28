@@ -35,8 +35,9 @@ from ..model.root import root
 from ..util import ensure
 from . import theme
 from .control import ControlListWidget
+from .prompt_enhancer import PromptEnhanceDialog
 from .prompt_library import PromptSaveDialog
-from .settings import settings
+from .settings import SettingsDialog, settings
 from .widget import TextPromptWidget
 
 
@@ -119,6 +120,15 @@ class ActiveRegionWidget(QFrame):
         self._header_label = QLabel(self)
         self._header_label.setStyleSheet(f"font-style: italic; color: {theme.grey};")
 
+        self._enhance_button = QToolButton(self)
+        self._enhance_button.setIcon(theme.icon("refine"))
+        self._enhance_button.setAutoRaise(True)
+        self._enhance_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._enhance_menu = QMenu(self._enhance_button)
+        self._enhance_menu.aboutToShow.connect(self._update_enhance_menu)
+        self._enhance_button.setMenu(self._enhance_menu)
+        self._enhance_button.clicked.connect(self._enhance_prompt)
+
         self._save_prompt_button = QToolButton(self)
         self._save_prompt_button.setIcon(theme.icon("save"))
         self._save_prompt_button.setAutoRaise(True)
@@ -140,6 +150,7 @@ class ActiveRegionWidget(QFrame):
         header_layout.addWidget(self._header_icon)
         header_layout.addSpacing(5)
         header_layout.addWidget(self._header_label, 1)
+        header_layout.addWidget(self._enhance_button)
         header_layout.addWidget(self._save_prompt_button)
         header_layout.addWidget(self._link_button)
         header_layout.addWidget(self._remove_button)
@@ -150,6 +161,7 @@ class ActiveRegionWidget(QFrame):
         self.positive = TextPromptWidget(parent=self)
         self.positive.handle_dragged.connect(self._handle_dragging)
         self.positive.installEventFilter(self)
+        self.positive.text_changed.connect(self._update_enhance_button)
 
         self.negative = TextPromptWidget(line_count=1, is_negative=True, parent=self)
         self.negative.handle_dragged.connect(self._handle_dragging)
@@ -271,6 +283,7 @@ class ActiveRegionWidget(QFrame):
         self._link_button.setVisible(not is_root_region)
         self._remove_button.setVisible(not is_root_region)
         self._save_prompt_button.setVisible(region is not None)
+        self._update_enhance_button()
         self.positive.setVisible(region is not None)
         self._no_region.setVisible(region is None)
 
@@ -291,7 +304,7 @@ class ActiveRegionWidget(QFrame):
 
     def _update_header(self):
         style = self._header_style
-        self._header.setVisible(len(self._root) > 0 and style is PromptHeader.full)
+        self._header.setVisible(style is PromptHeader.full)
         self._header_icon.setVisible(self.region is not None and style is not PromptHeader.none)
 
     def _update_links(self):
@@ -352,6 +365,48 @@ class ActiveRegionWidget(QFrame):
             name, saved_positive, category, tags = dialog.values()
             root.prompts.create(name, saved_positive, category, tags)
 
+    def _update_enhance_button(self, *args):
+        visible = self._region is not None and settings.enhancer_enabled
+        self._enhance_button.setVisible(visible)
+        if not visible:
+            return
+        if not self.positive.text.strip():
+            self._enhance_button.setEnabled(False)
+            self._enhance_button.setToolTip(_("Enter a prompt to enhance"))
+        elif not settings.enhancer_model:
+            self._enhance_button.setEnabled(False)
+            self._enhance_button.setToolTip(
+                _("No model configured - open Settings to set up the Prompt Enhancer")
+            )
+        else:
+            self._enhance_button.setEnabled(True)
+            self._enhance_button.setToolTip(_("Enhance prompt with AI"))
+
+    def _update_enhance_menu(self):
+        self._enhance_menu.clear()
+        presets = root.enhancer_presets
+        default_id = presets.default
+        for preset in presets:
+            action = ensure(self._enhance_menu.addAction(preset.name))
+            action.setCheckable(True)
+            action.setChecked(preset.id == default_id)
+            action.triggered.connect(partial(presets.set_default, preset.id))
+        self._enhance_menu.addSeparator()
+        configure_action = ensure(self._enhance_menu.addAction(_("Configure…")))
+        configure_action.triggered.connect(self._configure_enhancer)
+
+    def _configure_enhancer(self):
+        dialog = SettingsDialog.instance()
+        dialog.show_page(dialog.prompt_enhancer)
+
+    def _enhance_prompt(self):
+        region = self._region
+        text = self.positive.text
+        if region is None or not text.strip():
+            return
+        dialog = PromptEnhanceDialog(self, region, text)
+        dialog.exec()
+
     def _show_link_menu(self):
         active_layer = self._root.layers.active
         menu = QMenu()
@@ -396,6 +451,8 @@ class ActiveRegionWidget(QFrame):
             self._update_prompt_widgets()
         elif key == "prompt_translation":
             self._update_language()
+        elif key in {"enhancer_enabled", "enhancer_model"}:
+            self._update_enhance_button()
 
     async def _replace_with_translation(self, client: Client):
         region = self.region

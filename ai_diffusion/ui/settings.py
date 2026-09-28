@@ -48,6 +48,7 @@ from ..model.root import collect_diagnostics, root
 from ..model.updates import UpdateState
 from ..settings import ImageFileFormat, PerformancePreset, ServerMode, Settings, settings
 from ..style import Style
+from .prompt_enhancer import PromptEnhancerSettings
 from .server import ServerWidget
 from .settings_widgets import (
     ComboBoxSetting,
@@ -1173,6 +1174,7 @@ class SettingsDialog(QDialog):
         self.styles = StylePresets(server)
         self.diffusion = DiffusionSettings()
         self.interface = InterfaceSettings()
+        self.prompt_enhancer = PromptEnhancerSettings()
         self.performance = PerformanceSettings()
         self.about = AboutSettings()
 
@@ -1189,6 +1191,7 @@ class SettingsDialog(QDialog):
         create_list_item(_("Styles"), self.styles)
         create_list_item(_("Diffusion"), self.diffusion)
         create_list_item(_("Interface"), self.interface)
+        create_list_item(_("Prompt Enhancer"), self.prompt_enhancer)
         create_list_item(_("Performance"), self.performance)
         create_list_item(_("Plugin"), self.about)
 
@@ -1233,6 +1236,7 @@ class SettingsDialog(QDialog):
         self.styles.read()
         self.diffusion.read()
         self.interface.read()
+        self.prompt_enhancer.read()
         self.performance.read()
         self.about.read()
 
@@ -1247,8 +1251,14 @@ class SettingsDialog(QDialog):
         super().show()
 
         if style:
-            self._list.setCurrentRow(1)
+            self._list.setCurrentRow(self._stack.indexOf(self.styles))
             self.styles.current_style = style
+        self._close_button.setFocus()
+
+    def show_page(self, widget: QWidget):
+        self.read()
+        super().show()
+        self._list.setCurrentRow(self._stack.indexOf(widget))
         self._close_button.setFocus()
 
     def _change_page(self, index):
