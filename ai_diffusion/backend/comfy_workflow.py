@@ -1046,6 +1046,14 @@ class ComfyWorkflow:
         self.sample_count += 4  # approx, actual number depends on model and image size
         return self.add("ImageUpscaleWithModel", 1, upscale_model=upscale_model, image=image)
 
+    def ensure_rgb(self, image: Output, extent: Extent):
+        # Some VAEs (eg. Qwen-Image 2.1) decode to RGBA, and inputs may carry alpha too, but
+        # upscale models, VAEEncode and INPAINT_ColorMatch are RGB-only. Compositing onto an
+        # opaque background drops the alpha channel (see node_helpers.image_alpha_fix, used by
+        # ImageCompositeMasked).
+        background = self.empty_image(extent)
+        return self.composite_image_masked(image, background, None)
+
     def invert_image(self, image: Output):
         return self.add("ImageInvert", 1, image=image)
 

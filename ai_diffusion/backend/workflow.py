@@ -794,6 +794,8 @@ def scale(
         ratio = target.pixel_count / extent.pixel_count
         factor = max(2, min(4, math.ceil(math.sqrt(ratio))))
         upscale_model = w.load_upscale_model(models.upscale[UpscalerName.fast_x(factor)])
+        if models.arch.supports_alpha:
+            image = w.ensure_rgb(image, extent)
         image = w.upscale_image(upscale_model, image)
         return w.scale_image(image, target)
 
@@ -847,6 +849,8 @@ def scale_refine_and_decode(
 
     upscale_model = w.load_upscale_model(upscaler)
     decoded = vae_decode(w, vae, latent, tiled_vae)
+    if arch.supports_alpha:
+        decoded = w.ensure_rgb(decoded, extent.initial)
     upscale = w.upscale_image(upscale_model, decoded)
     upscale = w.scale_image(upscale, extent.desired)
     params = _sampler_params(sampling, extent.desired, strength=0.4)
@@ -1082,7 +1086,10 @@ def inpaint(
         )
         inpaint_model = model
     else:
-        latent = latent or vae_encode(w, vae, in_image, checkpoint.tiled_vae)
+        encode_image = in_image
+        if models.arch.supports_alpha:
+            encode_image = w.ensure_rgb(encode_image, extent.initial)
+        latent = latent or vae_encode(w, vae, encode_image, checkpoint.tiled_vae)
         latent = w.set_latent_noise_mask(latent, inpaint_mask)
         inpaint_model = model
 
@@ -1105,7 +1112,14 @@ def inpaint(
         upscale_model = w.load_upscale_model(upscaler)
         upscale = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
         upscale = w.crop_image(upscale, initial_bounds)
+        upscale_bounds_extent = initial_bounds.extent
+        if upscale_bounds_extent.shortest_side < 32:
+            upscale_bounds_extent = upscale_bounds_extent * (
+                32 / upscale_bounds_extent.shortest_side
+            )
         upscale = ensure_minimum_extent(w, upscale, initial_bounds.extent, 32)
+        if models.arch.supports_alpha:
+            upscale = w.ensure_rgb(upscale, upscale_bounds_extent)
         upscale = w.upscale_image(upscale_model, upscale)
         upscale = w.scale_image(upscale, upscale_extent.desired)
         latent = vae_encode(w, vae, upscale, checkpoint.tiled_vae)
@@ -1129,6 +1143,9 @@ def inpaint(
         )
         out_image = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
         input_cropped = w.crop_image(in_image, initial_bounds)
+        if models.arch.supports_alpha:
+            out_image = w.ensure_rgb(out_image, upscale_extent.desired)
+            input_cropped = w.ensure_rgb(input_cropped, initial_bounds.extent)
         out_image = w.color_match(out_image, input_cropped, upscale_mask, misc.color_match)
         out_image = scale_to_target(upscale_extent, w, out_image, models)
     else:
@@ -1138,6 +1155,9 @@ def inpaint(
             desired_extent, desired_extent, desired_extent, target_bounds.extent
         )
         out_image = vae_decode(w, vae, out_latent, checkpoint.tiled_vae)
+        if models.arch.supports_alpha:
+            out_image = w.ensure_rgb(out_image, extent.initial)
+            in_image = w.ensure_rgb(in_image, extent.initial)
         out_image = w.color_match(out_image, in_image, inpaint_mask, misc.color_match)
         out_image = scale(
             extent.initial, extent.desired, extent.refinement_scaling, w, out_image, models
@@ -1169,7 +1189,10 @@ def refine(
     in_image = w.load_image(image, alpha=models.arch.supports_alpha)
     in_image = scale_to_initial(extent, w, in_image, models)
     prompt, latent = encode_prompt(w, cond, clip, vae, regions, in_image, checkpoint.tiled_vae)
-    latent = latent or vae_encode(w, vae, in_image, checkpoint.tiled_vae)
+    encode_image = in_image
+    if models.arch.supports_alpha:
+        encode_image = w.ensure_rgb(encode_image, extent.initial)
+    latent = latent or vae_encode(w, vae, encode_image, checkpoint.tiled_vae)
     latent_batch = w.batch_latent(latent, misc.batch_count)
     latent_batch = setup_latent_layers(w, latent_batch, extent.desired, misc.layer_count)
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.desired, vae, models)
@@ -1220,7 +1243,10 @@ def refine_region(
         inpaint_patch = w.load_fooocus_inpaint(**models.fooocus_inpaint)
         inpaint_model = w.apply_fooocus_inpaint(model, inpaint_patch, latent_inpaint)
     else:
-        latent = latent or vae_encode(w, vae, in_image, checkpoint.tiled_vae)
+        encode_image = in_image
+        if models.arch.supports_alpha:
+            encode_image = w.ensure_rgb(encode_image, extent.initial)
+        latent = latent or vae_encode(w, vae, encode_image, checkpoint.tiled_vae)
         latent = w.set_latent_noise_mask(latent, initial_mask)
         inpaint_model = model
 
@@ -1232,6 +1258,9 @@ def refine_region(
     out_image = scale_refine_and_decode(
         extent, w, cond, sampling, out_latent, model_orig, clip, vae, models, checkpoint.tiled_vae
     )
+    if models.arch.supports_alpha:
+        out_image = w.ensure_rgb(out_image, extent.desired)
+        in_image = w.ensure_rgb(in_image, extent.initial)
     out_image = w.color_match(out_image, in_image, initial_mask, misc.color_match)
     out_image = w.nsfw_filter(out_image, sensitivity=misc.nsfw_filter)
     out_image = scale_to_target(extent, w, out_image, models)
