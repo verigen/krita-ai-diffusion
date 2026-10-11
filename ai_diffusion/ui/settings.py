@@ -877,7 +877,7 @@ class PerformanceSettings(SettingsTab):
         advanced_layout.addWidget(self._batch_size)
 
         self._resolution_multiplier = SliderSetting(
-            Settings._resolution_multiplier, self._advanced, 0.3, 1.5, suffix="x", decimals=1
+            Settings._resolution_multiplier, self._advanced, 0.3, 2.0, suffix="x", decimals=1
         )
         self._resolution_multiplier.value_changed.connect(self.write)
         advanced_layout.addWidget(self._resolution_multiplier)
