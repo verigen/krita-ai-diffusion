@@ -533,7 +533,8 @@ class DocumentModel(QObject, ObservableProperties):
 
             if selection_node := next(wf.find(type="ETN_KritaSelection"), None):
                 ctx = get_inpaint_context(selection_node)
-                mods = get_selection_modifiers(ctx, InpaintMode.fill, self.strength)
+                sel_arch = ctx if ctx is InpaintContext.mask_bounds else self.arch
+                mods = get_selection_modifiers(sel_arch, InpaintMode.fill, self.strength)
                 mask, select_bounds = self._doc.create_mask_from_selection(mods)
                 mask, bounds = self.custom.prepare_mask(selection_node, mask, select_bounds, bounds)
 
