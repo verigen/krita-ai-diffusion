@@ -13,7 +13,7 @@ from typing import Any, NamedTuple
 version = "1.54.0"
 
 comfy_url = "https://github.com/comfyanonymous/ComfyUI"
-comfy_version = "e9027f2b30f37bb3052714eb08fcf479542f4fc0"
+comfy_version = "45bf90d1c91eecd782643346dcfb73cb0017667f"
 
 
 class CustomNode(NamedTuple):
@@ -81,6 +81,7 @@ class Arch(Enum):
     flux_k = "Flux Kontext"
     flux2_4b = "Flux 2 Klein 4B"
     flux2_9b = "Flux 2 Klein 9B"
+    flux3 = "Flux 3 Klein"
     illu = "Illustrious"
     illu_v = "Illustrious v-prediction"
     chroma = "Chroma"
@@ -116,6 +117,8 @@ class Arch(Enum):
             return Arch.flux2_4b
         if string == "flux2_9b" or (string == "flux2" and model_type == "klein-9b"):
             return Arch.flux2_9b
+        if string == "flux3":
+            return Arch.flux3
         if string == "illu":
             return Arch.illu
         if string == "illu_v":
@@ -208,7 +211,7 @@ class Arch(Enum):
 
     @property
     def supports_edit(self):  # includes text-to-image models that can also edit
-        return self.is_edit or self.is_flux2 or self is Arch.qwen2
+        return self.is_edit or self.is_flux2 or self.is_flux3 or self is Arch.qwen2
 
     @property
     def is_sdxl_like(self):
@@ -222,6 +225,10 @@ class Arch(Enum):
     @property
     def is_flux2(self):
         return self in [Arch.flux2_4b, Arch.flux2_9b]
+
+    @property
+    def is_flux3(self):
+        return self is Arch.flux3
 
     @property
     def is_qwen_like(self):
@@ -254,7 +261,7 @@ class Arch(Enum):
                 return ["qwen_3_4b"]
             case Arch.ernie:
                 return ["ministral"]
-            case Arch.krea2:
+            case Arch.krea2 | Arch.flux3:
                 return ["qwen_3vl_4b"]
             case _:
                 raise ValueError(f"Unsupported architecture: {self}")
@@ -281,6 +288,7 @@ class Arch(Enum):
             Arch.zimage,
             Arch.ernie,
             Arch.krea2,
+            Arch.flux3,
         ]
 
 
@@ -424,7 +432,7 @@ class ControlMode(Enum):
 
     def can_substitute_instruction(self, arch: Arch):
         """True if this control mode is covered by instruction-following edit models."""
-        if arch.is_flux2 or arch is Arch.qwen2:
+        if arch.is_flux2 or arch.is_flux3 or arch is Arch.qwen2:
             return self in [
                 ControlMode.style,
                 ControlMode.composition,
@@ -848,6 +856,7 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.vae, Arch.zimage, "default"): ["z-image", "flux-", "flux_", "flux/", "flux1", "ae.s"],
     resource_id(ResourceKind.vae, Arch.ernie, "default"): ["flux2"],
     resource_id(ResourceKind.vae, Arch.krea2, "default"): ["qwen_image"],
+    resource_id(ResourceKind.vae, Arch.flux3, "default"): ["flux2"],
 }
 # fmt: on
 
@@ -887,6 +896,8 @@ required_resource_ids = {
     ResourceId(ResourceKind.vae, Arch.ernie, "default"),
     ResourceId(ResourceKind.text_encoder, Arch.krea2, "qwen_3vl_4b"),
     ResourceId(ResourceKind.vae, Arch.krea2, "default"),
+    ResourceId(ResourceKind.text_encoder, Arch.flux3, "qwen_3vl_4b"),
+    ResourceId(ResourceKind.vae, Arch.flux3, "default"),
 }
 
 recommended_resource_ids = [

@@ -109,5 +109,19 @@
         "steps": 20,
         "minimum_steps": 3,
         "cfg": 5.0
+    },
+    "Flux 3 - ER SDE": {
+        "sampler": "er_sde",
+        "scheduler": "simple",
+        "steps": 15,
+        "minimum_steps": 4,
+        "cfg": 1.0
+    },
+    "Flux 3 - Euler": {
+        "sampler": "euler",
+        "scheduler": "simple",
+        "steps": 16,
+        "minimum_steps": 4,
+        "cfg": 1.0
     }
 }

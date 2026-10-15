@@ -163,6 +163,8 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
                 clip = w.load_clip(te["ministral"], type="flux2")
             case Arch.krea2:
                 clip = w.load_clip(te["qwen_3vl_4b"], type="krea2")
+            case Arch.flux3:
+                clip = w.load_clip(te["qwen_3vl_4b"], type="flux3")
             case Arch.qwen2:
                 clip = w.load_clip(te["qwen_3vl_8b"], type="qwen_image")
             case _:
@@ -499,7 +501,7 @@ def apply_reference_conditioning(
         )
 
     match arch:
-        case Arch.flux2_4b | Arch.flux2_9b | Arch.qwen_e_p:
+        case Arch.flux2_4b | Arch.flux2_9b | Arch.flux3 | Arch.qwen_e_p:
             if cond.edit_reference and input_image:
                 input_latent = vae_encode(w, vae, input_image, tiled_vae)
                 prompt = add_ref(prompt, input_latent)
@@ -1546,6 +1548,7 @@ class PreparedPrompt(NamedTuple):
 _layer_replace = {
     Arch.flux2_4b: "image {}",
     Arch.flux2_9b: "image {}",
+    Arch.flux3: "image {}",
     Arch.qwen_e_p: "Picture {}",
     Arch.qwen2: "<image{}>",
 }
