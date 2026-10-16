@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, cast
 
-from PyQt6.QtCore import QAbstractProxyModel, QRect, QSize, QStringListModel, Qt
+from PyQt6.QtCore import QAbstractProxyModel, QModelIndex, QRect, QSize, QStringListModel, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPalette, QPen, QPixmap, QTextCursor
 from PyQt6.QtWidgets import QApplication, QCompleter, QPlainTextEdit, QStyle, QStyledItemDelegate
 
@@ -230,7 +230,10 @@ class PromptAutoComplete:
     def __init__(self, widget: QPlainTextEdit):
         self._widget = widget
         self._completer = QCompleter()
-        self._completer.activated.connect(self._insert_completion)
+        # The index overload is emitted before the string one, with the row actually chosen in
+        # the popup. QCompleter.currentIndex() doesn't follow popup navigation, so don't use it.
+        self._completer.activated[QModelIndex].connect(self._remember_activated)
+        self._completer.activated[str].connect(self._insert_completion)
         self._completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -246,6 +249,7 @@ class PromptAutoComplete:
         self._prompt_filter = PromptFilter(root.prompts)
         self._prompt_filter.sort_by_usage = True
         self._prompt_delegate = PromptCompleterDelegate()
+        self._activated_entry: PromptEntry | None = None
 
         self._reload_tag_model()
         settings.changed.connect(self._reload_tag_model)
@@ -363,7 +367,7 @@ class PromptAutoComplete:
         elif prefix.startswith("<layer:"):
             pass
         elif prefix.startswith("/") and not self._widget.is_negative:
-            entry = self._current_prompt_entry()
+            entry, self._activated_entry = self._activated_entry, None
             if entry is None:
                 return
             completion = entry.positive
@@ -383,14 +387,13 @@ class PromptAutoComplete:
         cursor.setPosition(start_cursor_pos + len(fill))
         self._widget.setTextCursor(cursor)
 
-    def _current_prompt_entry(self) -> PromptEntry | None:
-        index = self._completer.currentIndex()
-        if not index.isValid():
-            return None
+    def _remember_activated(self, index: QModelIndex):
+        self._activated_entry = None
+        if not index.isValid() or self._completer.model() is not self._prompt_filter:
+            return
         source_index = ensure(self._completer.completionModel()).mapToSource(index)
-        if not source_index.isValid():
-            return None
-        return self._prompt_filter[source_index.row()]
+        if source_index.isValid():
+            self._activated_entry = self._prompt_filter[source_index.row()]
 
     @property
     def is_active(self):
