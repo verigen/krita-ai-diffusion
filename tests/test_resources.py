@@ -58,6 +58,7 @@ def test_resource_ids_exist():
             Arch.ernie,
             Arch.krea2,
             Arch.flux3,
+            Arch.moss,
         ):
             continue  # no model downloads yet
         model = res.find_resource(resource_id)

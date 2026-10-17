@@ -123,5 +123,19 @@
         "steps": 16,
         "minimum_steps": 4,
         "cfg": 1.0
+    },
+    "MOSS - ER SDE": {
+        "sampler": "er_sde",
+        "scheduler": "simple",
+        "steps": 25,
+        "minimum_steps": 8,
+        "cfg": 2.5
+    },
+    "MOSS - Euler": {
+        "sampler": "euler",
+        "scheduler": "simple",
+        "steps": 50,
+        "minimum_steps": 8,
+        "cfg": 3.0
     }
 }

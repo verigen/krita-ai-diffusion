@@ -165,6 +165,8 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
                 clip = w.load_clip(te["qwen_3vl_4b"], type="krea2")
             case Arch.flux3:
                 clip = w.load_clip(te["qwen_3vl_4b"], type="flux3")
+            case Arch.moss:
+                clip = w.load_clip(te["qwen_35_9b"], type="moss_image")
             case Arch.qwen2:
                 clip = w.load_clip(te["qwen_3vl_8b"], type="qwen_image")
             case _:
@@ -202,6 +204,9 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
 
     if arch.supports_attention_guidance and checkpoint.self_attention_guidance:
         model = w.apply_self_attention_guidance(model)
+
+    if arch is Arch.moss:  # official MOSS-Image setting: skip layer 22 on the negative branch
+        model = w.apply_skip_layer_guidance(model, single_layers="22", end=0.5)
 
     return model, Clip(clip, arch), vae
 

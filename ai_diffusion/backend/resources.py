@@ -13,7 +13,7 @@ from typing import Any, NamedTuple
 version = "1.54.0"
 
 comfy_url = "https://github.com/comfyanonymous/ComfyUI"
-comfy_version = "45bf90d1c91eecd782643346dcfb73cb0017667f"
+comfy_version = "eb460bba69298a2764a8af17d88e9e1bac9f65a0"
 
 
 class CustomNode(NamedTuple):
@@ -94,6 +94,7 @@ class Arch(Enum):
     zimage = "Z-Image"
     ernie = "ERNIE Image"
     krea2 = "Krea 2"
+    moss = "MOSS Image"
 
     auto = "Automatic"
     all = "All"
@@ -144,6 +145,8 @@ class Arch(Enum):
             return Arch.ernie
         if string == "krea2":
             return Arch.krea2
+        if string in {"moss-image", "moss_image"}:
+            return Arch.moss
         return None
 
     @staticmethod
@@ -263,6 +266,8 @@ class Arch(Enum):
                 return ["ministral"]
             case Arch.krea2 | Arch.flux3:
                 return ["qwen_3vl_4b"]
+            case Arch.moss:
+                return ["qwen_35_9b"]
             case _:
                 raise ValueError(f"Unsupported architecture: {self}")
 
@@ -289,6 +294,7 @@ class Arch(Enum):
             Arch.ernie,
             Arch.krea2,
             Arch.flux3,
+            Arch.moss,
         ]
 
 
@@ -837,6 +843,7 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.text_encoder, Arch.all, "ministral"): ["ministral-3-3b", "ministral"],
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_4b"): ["qwen3vl_4b", "qwen_3vl_4b", "qwen3-vl-4b"],
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_8b"): ["qwen3vl_8b", "qwen_3vl_8b", "qwen3-vl-8b"],
+    resource_id(ResourceKind.text_encoder, Arch.all, "qwen_35_9b"): ["qwen3.5_9b", "qwen_3.5_9b", "qwen3.5-9b", "qwen35_9b", "qwen_35_9b"],
     resource_id(ResourceKind.vae, Arch.sd15, "default"): ["vae-ft-mse-840000-ema"],
     resource_id(ResourceKind.vae, Arch.sdxl, "default"): ["sdxl_vae"],
     resource_id(ResourceKind.vae, Arch.illu, "default"): ["sdxl_vae"],
@@ -857,6 +864,7 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.vae, Arch.ernie, "default"): ["flux2"],
     resource_id(ResourceKind.vae, Arch.krea2, "default"): ["qwen_image"],
     resource_id(ResourceKind.vae, Arch.flux3, "default"): ["flux2"],
+    resource_id(ResourceKind.vae, Arch.moss, "default"): ["flux2-vae_small", "flux2"],
 }
 # fmt: on
 
@@ -898,6 +906,8 @@ required_resource_ids = {
     ResourceId(ResourceKind.vae, Arch.krea2, "default"),
     ResourceId(ResourceKind.text_encoder, Arch.flux3, "qwen_3vl_4b"),
     ResourceId(ResourceKind.vae, Arch.flux3, "default"),
+    ResourceId(ResourceKind.text_encoder, Arch.moss, "qwen_35_9b"),
+    ResourceId(ResourceKind.vae, Arch.moss, "default"),
 }
 
 recommended_resource_ids = [
