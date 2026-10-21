@@ -13,7 +13,7 @@ from typing import Any, NamedTuple
 version = "1.54.0"
 
 comfy_url = "https://github.com/comfyanonymous/ComfyUI"
-comfy_version = "eb460bba69298a2764a8af17d88e9e1bac9f65a0"
+comfy_version = "87ed5a066d9c4660ef42100fd01a888da6994856"
 
 
 class CustomNode(NamedTuple):
@@ -95,6 +95,7 @@ class Arch(Enum):
     ernie = "ERNIE Image"
     krea2 = "Krea 2"
     moss = "MOSS Image"
+    fibo2 = "Fibo 2"
 
     auto = "Automatic"
     all = "All"
@@ -147,6 +148,8 @@ class Arch(Enum):
             return Arch.krea2
         if string in {"moss-image", "moss_image"}:
             return Arch.moss
+        if string == "fibo2":
+            return Arch.fibo2
         return None
 
     @staticmethod
@@ -214,7 +217,7 @@ class Arch(Enum):
 
     @property
     def supports_edit(self):  # includes text-to-image models that can also edit
-        return self.is_edit or self.is_flux2 or self.is_flux3 or self is Arch.qwen2
+        return self.is_edit or self.is_flux2 or self.is_flux3 or self in (Arch.qwen2, Arch.fibo2)
 
     @property
     def is_sdxl_like(self):
@@ -264,7 +267,7 @@ class Arch(Enum):
                 return ["qwen_3_4b"]
             case Arch.ernie:
                 return ["ministral"]
-            case Arch.krea2 | Arch.flux3:
+            case Arch.krea2 | Arch.flux3 | Arch.fibo2:
                 return ["qwen_3vl_4b"]
             case Arch.moss:
                 return ["qwen_35_9b"]
@@ -295,6 +298,7 @@ class Arch(Enum):
             Arch.krea2,
             Arch.flux3,
             Arch.moss,
+            Arch.fibo2,
         ]
 
 
@@ -438,7 +442,7 @@ class ControlMode(Enum):
 
     def can_substitute_instruction(self, arch: Arch):
         """True if this control mode is covered by instruction-following edit models."""
-        if arch.is_flux2 or arch.is_flux3 or arch is Arch.qwen2:
+        if arch.is_flux2 or arch.is_flux3 or arch in (Arch.qwen2, Arch.fibo2):
             return self in [
                 ControlMode.style,
                 ControlMode.composition,
@@ -865,6 +869,7 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.vae, Arch.krea2, "default"): ["qwen_image"],
     resource_id(ResourceKind.vae, Arch.flux3, "default"): ["flux2"],
     resource_id(ResourceKind.vae, Arch.moss, "default"): ["flux2-vae_small", "flux2"],
+    resource_id(ResourceKind.vae, Arch.fibo2, "default"): ["flux2"],
 }
 # fmt: on
 
@@ -908,6 +913,8 @@ required_resource_ids = {
     ResourceId(ResourceKind.vae, Arch.flux3, "default"),
     ResourceId(ResourceKind.text_encoder, Arch.moss, "qwen_35_9b"),
     ResourceId(ResourceKind.vae, Arch.moss, "default"),
+    ResourceId(ResourceKind.text_encoder, Arch.fibo2, "qwen_3vl_4b"),
+    ResourceId(ResourceKind.vae, Arch.fibo2, "default"),
 }
 
 recommended_resource_ids = [

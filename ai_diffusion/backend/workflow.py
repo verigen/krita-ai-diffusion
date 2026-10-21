@@ -167,6 +167,8 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
                 clip = w.load_clip(te["qwen_3vl_4b"], type="flux3")
             case Arch.moss:
                 clip = w.load_clip(te["qwen_35_9b"], type="moss_image")
+            case Arch.fibo2:
+                clip = w.load_clip(te["qwen_3vl_4b"], type="fibo2")
             case Arch.qwen2:
                 clip = w.load_clip(te["qwen_3vl_8b"], type="qwen_image")
             case _:
@@ -549,6 +551,11 @@ def encode_prompt(
             negative = cond.negative.prepare(w) if cond.negative else ""
             prompt = w.text_encode_qwen2(clip.model, vae, ref_images, positive, negative)
             return prompt, None  # note: latent returned by this node is always noise/empty
+        elif arch is Arch.fibo2:
+            positive = cond.positive.prepare(w, cond.style_prompt)
+            negative = cond.negative.prepare(w) if cond.negative else ""
+            prompt = w.text_encode_fibo2(clip.model, vae, ref_images, positive, negative)
+            return prompt, None
         else:
             positive = cond.positive.encode(w, clip, cond.style_prompt, ref_images)
             negative = cond.negative.encode(w, clip) if cond.negative else positive
@@ -1556,6 +1563,7 @@ _layer_replace = {
     Arch.flux3: "image {}",
     Arch.qwen_e_p: "Picture {}",
     Arch.qwen2: "<image{}>",
+    Arch.fibo2: "<image_{}>",
 }
 _control_instructions = {
     ControlMode.style: "Apply the style from {}.",

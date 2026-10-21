@@ -269,7 +269,7 @@ def _base_cost(arch: Arch):
         return 2
     if arch.is_flux_like or arch.is_flux2 or arch.is_flux3:
         return 4
-    if arch in (Arch.zimage, Arch.moss):
+    if arch in (Arch.zimage, Arch.moss, Arch.fibo2):
         return 6
     return 1
 
