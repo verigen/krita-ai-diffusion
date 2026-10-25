@@ -337,7 +337,8 @@ class PromptAutoComplete:
             self._popup.setItemDelegate(self._item_delegate)
         elif prompt_mode:
             self._completer.setModel(self._prompt_filter)
-            self._completion_prefix = name
+            # Include the "/" trigger so it gets replaced along with the typed name.
+            self._completion_prefix = prefix
             self._completion_suffix = ""
             self._popup.setItemDelegate(self._prompt_delegate)
         else:
