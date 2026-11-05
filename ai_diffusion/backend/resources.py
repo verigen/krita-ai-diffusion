@@ -212,6 +212,13 @@ class Arch(Enum):
         return self is Arch.qwen2
 
     @property
+    def pid_latent_format(self) -> str | None:
+        """VAE latent family used to select a PiD (Pixel Diffusion) upscale model, if any."""
+        if self in (Arch.krea2, Arch.qwen, Arch.qwen_e, Arch.qwen_e_p, Arch.anima):
+            return "qwenimage"
+        return None
+
+    @property
     def is_edit(self):  # edit models make changes to input images
         return self in [Arch.flux_k, Arch.qwen_e, Arch.qwen_e_p, Arch.qwen_l]
 
@@ -483,7 +490,7 @@ class ResourceId(NamedTuple):
         arch = Arch[arch]
         if identifier in ControlMode.__members__:
             identifier = ControlMode[identifier]
-        elif kind == ResourceKind.upscaler:
+        elif kind == ResourceKind.upscaler and identifier in UpscalerName.__members__:
             identifier = UpscalerName[identifier]
         return ResourceId(kind, arch, identifier)
 
@@ -848,6 +855,9 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_4b"): ["qwen3vl_4b", "qwen_3vl_4b", "qwen3-vl-4b"],
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_8b"): ["qwen3vl_8b", "qwen_3vl_8b", "qwen3-vl-8b"],
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_35_9b"): ["qwen3.5_9b", "qwen_3.5_9b", "qwen3.5-9b", "qwen35_9b", "qwen_35_9b"],
+    resource_id(ResourceKind.text_encoder, Arch.all, "gemma_2_2b"): ["gemma_2_2b"],
+    # Only the 4-step distilled PiD models: the workflow uses fixed 4-step LCM sampling
+    resource_id(ResourceKind.upscaler, Arch.all, "pid_qwenimage"): ["pid*qwenimage*4step"],
     resource_id(ResourceKind.vae, Arch.sd15, "default"): ["vae-ft-mse-840000-ema"],
     resource_id(ResourceKind.vae, Arch.sdxl, "default"): ["sdxl_vae"],
     resource_id(ResourceKind.vae, Arch.illu, "default"): ["sdxl_vae"],

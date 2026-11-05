@@ -375,6 +375,8 @@ class DocumentModel(QObject, ObservableProperties):
         job.id = await client.enqueue(input, front)
 
     def _prepare_upscale_image(self, dryrun=False):
+        if self.upscale.method is UpscaleMethod.pid:
+            return self._prepare_pid_upscale(dryrun)
         client = self._connection.client
         extent = self._doc.extent
         image = self._doc.get_image(Bounds(0, 0, *extent)) if not dryrun else DummyImage(extent)
@@ -421,6 +423,45 @@ class DocumentModel(QObject, ObservableProperties):
 
         target_bounds = Bounds(0, 0, *params.target_extent)
         name = f"{target_bounds.width}x{target_bounds.height}"
+        job_params = JobParams(target_bounds, name, seed=params.seed, regions=job_regions)
+        return input, job_params
+
+    def _prepare_pid_upscale(self, dryrun=False):
+        client = self._connection.client
+        extent = self._doc.extent
+        image = self._doc.get_image(Bounds(0, 0, *extent)) if not dryrun else DummyImage(extent)
+        params = self.upscale.params
+        bounds = Bounds(0, 0, *extent)
+        if params.use_prompt and not dryrun:
+            conditioning, job_regions = process_regions(self.regions, bounds, min_coverage=0)
+            conditioning.language = self.prompt_translation_language
+            for region in job_regions:
+                region.bounds = Bounds.scale(region.bounds, params.factor)
+        else:
+            sys_prompt = "4k uhd"
+            if self.arch.is_edit:
+                sys_prompt = "Enhance image quality. Preserve original content."
+            conditioning, job_regions = ConditioningInput(sys_prompt), []
+
+        input = workflow.prepare(
+            WorkflowKind.upscale_pid,
+            image,
+            conditioning,
+            self.style,
+            params.seed,
+            client.models,
+            FileLibrary.instance(),
+            self._performance_settings(client),
+            strength=params.strength,
+            upscale_factor=params.factor,
+            upscale=UpscaleInput(
+                refine=params.use_diffusion,
+                refine_scale=params.refine_scale,
+                pid_tile_size=params.pid_tile_size,
+            ),
+        )
+        target_bounds = Bounds(0, 0, *params.target_extent)
+        name = f"{target_bounds.width}x{target_bounds.height} PiD"
         job_params = JobParams(target_bounds, name, seed=params.seed, regions=job_regions)
         return input, job_params
 
@@ -1114,11 +1155,18 @@ class UpscaleParams:
     strength: float
     target_extent: Extent
     seed: int
+    refine_scale: float = 1.0
+    pid_tile_size: int = 2048
 
 
 class TileOverlapMode(Enum):
     auto = 0
     custom = 1
+
+
+class UpscaleMethod(Enum):
+    model = 0  # upscale model, optionally followed by tiled diffusion refine
+    pid = 1  # optional diffusion refine, then PiD latent upscale
 
 
 class UpscaleWorkspace(QObject, ObservableProperties):
@@ -1130,6 +1178,9 @@ class UpscaleWorkspace(QObject, ObservableProperties):
     tile_overlap_mode = Property(TileOverlapMode.auto, persist=True)
     tile_overlap = Property(48, persist=True)
     use_prompt = Property(False, persist=True)
+    method = Property(UpscaleMethod.model, persist=True)
+    refine_scale = Property(1.5, persist=True)
+    pid_tile_size = Property(2048, persist=True)
     can_generate = Property(True)
 
     upscaler_changed = pyqtSignal(str)
@@ -1140,6 +1191,9 @@ class UpscaleWorkspace(QObject, ObservableProperties):
     tile_overlap_mode_changed = pyqtSignal(TileOverlapMode)
     tile_overlap_changed = pyqtSignal(int)
     use_prompt_changed = pyqtSignal(bool)
+    method_changed = pyqtSignal(UpscaleMethod)
+    refine_scale_changed = pyqtSignal(float)
+    pid_tile_size_changed = pyqtSignal(int)
     target_extent_changed = pyqtSignal(Extent)
     can_generate_changed = pyqtSignal(bool)
     modified = pyqtSignal(QObject, str)
@@ -1189,6 +1243,8 @@ class UpscaleWorkspace(QObject, ObservableProperties):
             strength=1.0 if model.arch.is_edit else self.strength,
             target_extent=self.target_extent,
             seed=model.seed if model.fixed_seed else workflow.generate_seed(),
+            refine_scale=self.refine_scale,
+            pid_tile_size=self.pid_tile_size,
         )
 
 

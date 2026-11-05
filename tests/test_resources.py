@@ -64,3 +64,19 @@ def test_resource_ids_exist():
             continue  # no model downloads yet
         model = res.find_resource(resource_id)
         assert model is not None, f"Resource ID {resource_id} not found"
+
+
+def test_resource_id_parse_roundtrip():
+    # All known resource ids must parse (e.g. string identifiers like PiD upscale models)
+    for id in res.search_paths:
+        assert res.ResourceId.parse(id).string == id
+
+
+def test_find_pid_model_requires_4step():
+    from ai_diffusion.backend.comfy_client import _find_pid_models
+
+    full = "PID/pid_1.5_qwenimage_1024_to_4096_int8_convrot.safetensors"
+    distilled = "PID/pid_1.5_qwenimage_1024_to_4096_4step_int8_convrot.safetensors"
+    id = res.resource_id(res.ResourceKind.upscaler, Arch.all, "pid_qwenimage")
+    assert _find_pid_models([full, distilled, "KREA2/krea2_turbo.safetensors"])[id] == distilled
+    assert _find_pid_models([full])[id] is None  # full model needs other sampler settings

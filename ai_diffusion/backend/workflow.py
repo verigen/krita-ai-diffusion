@@ -18,7 +18,7 @@ from ..text import (
     replace_layers,
     strip_prompt_comments,
 )
-from ..util import ensure, median_or_zero, unique
+from ..util import PluginError, ensure, median_or_zero, unique
 from . import resolution, resources
 from .api import (
     CheckpointInput,
@@ -38,7 +38,7 @@ from .api import (
     WorkflowInput,
     WorkflowKind,
 )
-from .client import ClientModels, ModelDict, resolve_arch
+from .client import ClientModels, ModelDict, pid_text_encoder, pid_upscale_status, resolve_arch
 from .comfy_workflow import (
     ComfyNode,
     ComfyRunMode,
@@ -828,6 +828,109 @@ def scale_to_initial(
 
 def scale_to_target(extent: ScaledExtent, w: ComfyWorkflow, image: Output, models: ModelDict):
     return scale(extent.desired, extent.target, extent.target_scaling, w, image, models)
+
+
+pid_scale_factor = 4  # PiD models output 4x the pixel resolution of the source latent
+pid_tile_overlap = 256  # in output pixels
+pid_tile_sizes = [1024, 2048, 3072, 4096]
+
+
+def pid_tile_count(initial: Extent, tile_size: int, overlap=pid_tile_overlap, latent_factor=8):
+    """Number of tiles VerigenPiDTiledUpscale will process (mirrors the node's tiling)."""
+    ratio = pid_scale_factor * latent_factor  # output pixels per latent pixel
+    tile = max(1, tile_size // ratio)
+    ov = min(overlap // ratio, tile - 1)
+
+    def count(size: int):
+        if size <= tile:
+            return 1
+        return -(-(size - ov) // (tile - ov))
+
+    return count(initial.width // latent_factor) * count(initial.height // latent_factor)
+
+
+def pid_upscale_and_decode(
+    w: ComfyWorkflow,
+    latent: Output,
+    cond: Conditioning,
+    seed: int,
+    models: ModelDict,
+    tile_size: int = 2048,
+):
+    """Upscales a latent with a PiD (Pixel Diffusion) model and decodes it directly to pixels,
+    skipping the decode / upscale / re-encode / refine round trip.
+    Returns an image at `pid_scale_factor` times the latent's pixel resolution."""
+    family = ensure(models.arch.pid_latent_format)
+    pid_model = w.load_diffusion_model(models.upscale[f"pid_{family}"])
+    clip = w.load_clip(models.text_encoder[pid_text_encoder], type="pixeldit")
+    prompt = w.clip_text_encode(clip, cond.positive.prepare(w, cond.style_prompt))
+    upscaled = w.pid_tiled_upscale(
+        pid_model,
+        prompt,
+        prompt,
+        latent,
+        family,
+        seed,
+        tile_size=tile_size,
+        overlap=pid_tile_overlap,
+    )
+    return w.vae_decode(w.load_vae("pixel_space"), upscaled)
+
+
+def pid_upscale_extent(
+    canvas: Extent, factor: float, refine: bool, refine_scale: float, arch: Arch, max_pixels: int
+):
+    """Resolutions for PiD upscale: `initial` is the image encoded (and optionally refined) before
+    the PiD pass, `target` the final size. PiD itself always renders `pid_scale_factor` x initial."""
+    if refine:
+        initial = canvas * refine_scale
+        max_pixel_count = max_pixels * 10**6
+        if max_pixel_count > 0 and initial.pixel_count > int(max_pixel_count * 1.05):
+            initial = initial.scale_to_pixel_count(max_pixel_count)
+        initial = initial.multiple_of(resolution.diffusion_multiple(arch))
+    else:
+        initial = canvas.multiple_of(8)  # VAE encode only
+    return ExtentInput(canvas, initial, initial, canvas * factor)
+
+
+def upscale_pid(
+    w: ComfyWorkflow,
+    image: Image,
+    extent: ScaledExtent,
+    checkpoint: CheckpointInput,
+    cond: Conditioning,
+    sampling: SamplingInput,
+    upscale: UpscaleInput,
+    models: ModelDict,
+):
+    """Encode the image, optionally refine it with the style's model, then upscale the latent
+    with PiD and decode straight to pixels at the target resolution.
+    If refine is disabled the diffusion model is not used (ComfyUI skips unconnected nodes)."""
+    model, clip, vae = load_checkpoint_with_lora(w, checkpoint, models.all)
+    in_image = w.load_image(image)
+    if extent.input != extent.initial:
+        in_image = w.scale_image(in_image, extent.initial)
+
+    if upscale.refine:
+        model = apply_ip_adapter(w, model, cond.control, models)
+        model, regions = apply_attention_mask(w, model, cond, clip, extent.initial)
+        model = apply_regional_ip_adapter(w, model, cond.regions, extent.initial, models)
+        prompt, latent = encode_prompt(w, cond, clip, vae, regions, in_image, checkpoint.tiled_vae)
+        latent = latent or vae_encode(w, vae, in_image, checkpoint.tiled_vae)
+        model, prompt = apply_control(
+            w, model, prompt, cond.all_control, extent.initial, vae, models
+        )
+        params = _sampler_params(sampling, extent.initial)
+        latent = w.sampler_custom_advanced(model, prompt, latent, models.arch, **params)
+    else:
+        latent = vae_encode(w, vae, in_image, checkpoint.tiled_vae)
+
+    out_image = pid_upscale_and_decode(
+        w, latent, cond, sampling.seed, models, tile_size=upscale.pid_tile_size
+    )
+    out_image = w.scale_image(out_image, extent.target)
+    w.send_image(out_image)
+    return w
 
 
 def scale_refine_and_decode(
@@ -1761,6 +1864,25 @@ def prepare(
         i.inpaint = InpaintParams.clamped(inpaint)
         downscale_all_control_images(i.conditioning, canvas.extent, i.images.extent.desired)
 
+    elif kind is WorkflowKind.upscale_pid:
+        assert isinstance(canvas, Image) and style and upscale is not None
+        available, reason = pid_upscale_status(models, arch)
+        if not available:
+            raise PluginError(f"PiD upscale unavailable: {reason}")
+        i.images = ImageInput(
+            pid_upscale_extent(
+                canvas.extent,
+                upscale_factor,
+                upscale.refine,
+                upscale.refine_scale,
+                arch,
+                perf.max_pixel_count,
+            ),
+            canvas,
+        )
+        i.upscale = upscale
+        i.batch_count = 1
+
     elif kind is WorkflowKind.upscale_tiled:
         assert isinstance(canvas, Image) and style
         target_extent = canvas.extent * upscale_factor
@@ -1884,6 +2006,17 @@ def create(i: WorkflowInput, models: ClientModels, comfy_mode=ComfyRunMode.serve
             ensure(i.sampling),
             ensure(i.upscale),
             misc,
+            models.for_arch(ensure(i.models).version),
+        )
+    elif i.kind is WorkflowKind.upscale_pid:
+        return upscale_pid(
+            workflow,
+            i.image,
+            ScaledExtent.from_input(i.extent),
+            ensure(i.models),
+            Conditioning.from_input(ensure(i.conditioning), i.sampling),
+            ensure(i.sampling),
+            ensure(i.upscale),
             models.for_arch(ensure(i.models).version),
         )
     elif i.kind is WorkflowKind.control_image:

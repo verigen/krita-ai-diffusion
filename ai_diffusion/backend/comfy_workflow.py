@@ -1006,6 +1006,40 @@ class ComfyWorkflow:
     def vae_decode(self, vae: Output, latent_image: Output):
         return self.add("VAEDecode", 1, vae=vae, samples=latent_image)
 
+    def pid_tiled_upscale(
+        self,
+        model: Output,
+        positive: Output,
+        negative: Output,
+        latent: Output,
+        latent_format: str,
+        seed: int,
+        steps=4,
+        cfg=1.0,
+        sampler="lcm",
+        scheduler="simple",
+        tile_size=2048,
+        overlap=256,
+    ):
+        return self.add(
+            "VerigenPiDTiledUpscale",
+            1,
+            model=model,
+            positive=positive,
+            negative=negative,
+            latent=latent,
+            latent_format=latent_format,
+            degrade_sigma=0.0,
+            tile_size=tile_size,
+            overlap=overlap,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler_name=sampler,
+            scheduler=scheduler,
+            color_match_strength=0.0,
+        )
+
     def vae_decode_tiled(self, vae: Output, latent_image: Output):
         return self.add(
             "VAEDecodeTiled",

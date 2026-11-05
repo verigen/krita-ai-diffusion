@@ -28,7 +28,7 @@ from ai_diffusion.backend.comfy_client import ComfyClient
 from ai_diffusion.backend.comfy_workflow import ComfyWorkflow
 from ai_diffusion.backend.resources import ControlMode, ResourceKind, resource_id
 from ai_diffusion.backend.workflow import detect_inpaint
-from ai_diffusion.files import File, FileCollection, FileLibrary, FileSource
+from ai_diffusion.files import File, FileCollection, FileFormat, FileLibrary, FileSource
 from ai_diffusion.image import Bounds, Extent, Image, ImageCollection, Mask
 from ai_diffusion.pose import Pose
 from ai_diffusion.settings import PerformanceSettings
@@ -1364,3 +1364,159 @@ def test_inpaint_benchmark(pytestconfig, qtapp, client):
 #     workflow["image_data"] = {"bytes": data, "offsets": offsets}
 #     input = WorkflowInput.from_dict(workflow)
 #     run_and_save(qtapp, client, input, "test_reproduce")
+
+
+def _pid_models(node=True, model=True, te=True):
+    from ai_diffusion.backend.comfy_workflow import ComfyObjectInfo
+
+    models = ClientModels()
+    models.node_inputs = ComfyObjectInfo({"VerigenPiDTiledUpscale": {}} if node else {})
+    upscaler = resource_id(ResourceKind.upscaler, Arch.all, "pid_qwenimage")
+    models.resources[upscaler] = "PID/pid_1.5_qwenimage_4step.safetensors" if model else None
+    te_id = resource_id(ResourceKind.text_encoder, Arch.all, "gemma_2_2b")
+    models.resources[te_id] = "gemma_2_2b_it_elm_fp8_scaled.safetensors" if te else None
+    default_upscaler = resource_id(ResourceKind.upscaler, Arch.all, "default")
+    models.resources[default_upscaler] = "4x_NMKD-Superscale-SP_178000_G.pth"
+    return models
+
+
+def test_pid_upscale_status():
+    from ai_diffusion.backend.client import pid_upscale_status
+
+    assert pid_upscale_status(_pid_models(), Arch.krea2) == (True, "")
+    assert not pid_upscale_status(None, Arch.krea2)[0]
+    assert "verigen" in pid_upscale_status(_pid_models(node=False), Arch.krea2)[1]
+    assert "4-step model" in pid_upscale_status(_pid_models(model=False), Arch.krea2)[1]
+    assert "gemma_2_2b" in pid_upscale_status(_pid_models(te=False), Arch.krea2)[1]
+    assert not pid_upscale_status(_pid_models(), Arch.qwen2)[0]
+    assert not pid_upscale_status(_pid_models(), Arch.sdxl)[0]
+
+
+def test_pid_upscale_extent():
+    canvas = Extent(1920, 1080)
+    e = workflow.pid_upscale_extent(canvas, 2.0, True, 1.5, Arch.krea2, max_pixels=6)
+    assert e.initial == Extent(2880, 1632) and e.target == Extent(3840, 2160)
+    e = workflow.pid_upscale_extent(canvas, 2.0, False, 1.5, Arch.krea2, max_pixels=6)
+    assert e.initial == canvas and e.target == Extent(3840, 2160)
+    e = workflow.pid_upscale_extent(canvas, 2.0, True, 2.0, Arch.krea2, max_pixels=6)
+    assert e.initial.pixel_count <= 6.3 * 10**6  # capped by max pixel count
+
+
+@pytest.mark.parametrize("refine", [True, False])
+def test_upscale_pid_graph(refine: bool):
+    models = _pid_models()
+    models.checkpoints["krea2"] = CheckpointInfo(
+        "krea2.safetensors", Arch.krea2, FileFormat.diffusion
+    )
+    models.resources[resource_id(ResourceKind.vae, Arch.krea2, "default")] = "qwen_image_vae"
+    models.resources[resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_4b")] = "qwen3vl_4b"
+    canvas = Image.create(Extent(1920, 1080))
+    extent = workflow.pid_upscale_extent(canvas.extent, 2.0, refine, 1.5, Arch.krea2, 6)
+    w = ComfyWorkflow()
+    workflow.upscale_pid(
+        w,
+        canvas,
+        workflow.ScaledExtent.from_input(extent),
+        workflow.CheckpointInput("krea2", Arch.krea2),
+        workflow.Conditioning(workflow.TextPrompt("4k uhd", ""), None),
+        SamplingInput("euler", "simple", 1.0, 10, start_step=6, seed=7),
+        UpscaleInput(refine=refine, refine_scale=1.5),
+        models.for_arch(Arch.krea2),
+    )
+    nodes = list(w.root.values())
+    classes = [n["class_type"] for n in nodes]
+    assert classes.count("VerigenPiDTiledUpscale") == 1
+    assert ("SamplerCustomAdvanced" in classes) == refine
+    assert "UpscaleModelLoader" not in classes
+    pid = next(n for n in nodes if n["class_type"] == "VerigenPiDTiledUpscale")
+    assert pid["inputs"]["latent_format"] == "qwenimage" and pid["inputs"]["seed"] == 7
+    assert {"vae_name": "pixel_space"} in [
+        n["inputs"] for n in nodes if n["class_type"] == "VAELoader"
+    ]
+    final = next(n for n in reversed(nodes) if n["class_type"] == "ImageScale")
+    assert (final["inputs"]["width"], final["inputs"]["height"]) == (3840, 2160)
+
+
+@pytest.mark.parametrize("refine", [True, False])
+def test_prepare_upscale_pid_with_lora(refine: bool):
+    # Style with LoRA triggers a scan of all server resources (regression: pid_* ids)
+    models = _pid_models()
+    models.checkpoints = {
+        "krea2": CheckpointInfo("krea2.safetensors", Arch.krea2, FileFormat.diffusion)
+    }
+    models.resources[resource_id(ResourceKind.vae, Arch.krea2, "default")] = "qwen_image_vae"
+    models.resources[resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_4b")] = "qwen3vl_4b"
+    models.loras = ["fedor.safetensors"]
+    files = FileLibrary(FileCollection(), FileCollection())
+    files.loras.update([File.remote(m) for m in models.loras], FileSource.remote)
+    style = Style(Path("krea2.json"))
+    style.checkpoints = ["krea2"]
+    style.architecture = Arch.krea2
+    style.loras.append({"name": "fedor.safetensors", "strength": 0.8})
+
+    job = workflow.prepare(
+        WorkflowKind.upscale_pid,
+        Image.create(Extent(1920, 1080)),
+        ConditioningInput("4k uhd"),
+        style,
+        seed=7,
+        models=models,
+        files=files,
+        perf=default_perf,
+        strength=0.4,
+        upscale_factor=2.0,
+        upscale=UpscaleInput(refine=refine, refine_scale=1.5),
+    )
+    assert job.extent.target == Extent(3840, 2160)
+    w = workflow.create(job, models)
+    classes = [n["class_type"] for n in w.root.values()]
+    assert "VerigenPiDTiledUpscale" in classes
+    assert ("SamplerCustomAdvanced" in classes) == refine
+
+
+def _node_tile_starts(size, tile, overlap):  # copy of VerigenPiDTiledUpscale._tile_starts
+    if size <= tile:
+        return [0]
+    stride = tile - overlap
+    count = -(-(size - overlap) // stride)
+    return [min(i * stride, size - tile) for i in range(count)]
+
+
+@pytest.mark.parametrize("tile_size", workflow.pid_tile_sizes)
+@pytest.mark.parametrize("extent", [Extent(2880, 1632), Extent(1920, 1080), Extent(512, 512)])
+def test_pid_tile_count(tile_size: int, extent: Extent):
+    tile, ov = tile_size // 32, min(256 // 32, tile_size // 32 - 1)
+    lat_w, lat_h = extent.width // 8, extent.height // 8
+    expected = len(_node_tile_starts(lat_w, tile, ov)) * len(_node_tile_starts(lat_h, tile, ov))
+    assert workflow.pid_tile_count(extent, tile_size) == expected
+
+
+def test_pid_tile_count_examples():
+    assert workflow.pid_tile_count(Extent(2880, 1632), 2048) == 28
+    assert workflow.pid_tile_count(Extent(2880, 1632), 3072) == 12
+    assert workflow.pid_tile_count(Extent(1920, 1080), 2048) == 15
+    assert workflow.pid_tile_count(Extent(1920, 1080), 3072) == 6
+
+
+def test_upscale_pid_tile_size_in_graph():
+    models = _pid_models()
+    models.checkpoints["krea2"] = CheckpointInfo(
+        "krea2.safetensors", Arch.krea2, FileFormat.diffusion
+    )
+    models.resources[resource_id(ResourceKind.vae, Arch.krea2, "default")] = "qwen_image_vae"
+    models.resources[resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_4b")] = "qwen3vl_4b"
+    canvas = Image.create(Extent(1920, 1080))
+    extent = workflow.pid_upscale_extent(canvas.extent, 2.0, False, 1.0, Arch.krea2, 6)
+    w = ComfyWorkflow()
+    workflow.upscale_pid(
+        w,
+        canvas,
+        workflow.ScaledExtent.from_input(extent),
+        workflow.CheckpointInput("krea2", Arch.krea2),
+        workflow.Conditioning(workflow.TextPrompt("4k uhd", ""), None),
+        SamplingInput("euler", "simple", 1.0, 10, seed=7),
+        UpscaleInput(refine=False, pid_tile_size=3072),
+        models.for_arch(Arch.krea2),
+    )
+    pid = next(n for n in w.root.values() if n["class_type"] == "VerigenPiDTiledUpscale")
+    assert pid["inputs"]["tile_size"] == 3072 and pid["inputs"]["overlap"] == 256

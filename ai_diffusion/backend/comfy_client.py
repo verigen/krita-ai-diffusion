@@ -221,6 +221,12 @@ class ComfyClient(Client):
         models.upscalers = nodes.options("UpscaleModelLoader", "model_name")
         available_resources.update(_find_upscalers(models.upscalers))
 
+        # Optional PiD (Pixel Diffusion) latent upscale models, used by VerigenPiDTiledUpscale
+        try:
+            available_resources.update(_find_pid_models(nodes.options("UNETLoader", "unet_name")))
+        except Exception as e:
+            log.warning(f"Failed to look up PiD upscale models: {e}")
+
         inpaint_models = nodes.options("INPAINT_LoadInpaintModel", "model_name")
         available_resources.update(_find_inpaint_models(inpaint_models))
 
@@ -769,6 +775,7 @@ def _find_text_encoder_models(model_list: Sequence[str]):
         "qwen_3vl_8b",
         "qwen_35_9b",
         "ministral",
+        "gemma_2_2b",
     ]
     return {
         resource_id(kind, Arch.all, te): _find_model(model_list, kind, Arch.all, te) for te in tes
@@ -812,6 +819,15 @@ def _find_model_patches(model_list: Sequence[str]):
         ResourceId(ResourceKind.model_patch, Arch.zimage, ControlMode.blur),
     ]
     return {r.string: _find_model(model_list, r.kind, r.arch, r.identifier) for r in res}
+
+
+def _find_pid_models(model_list: Sequence[str]):
+    kind = ResourceKind.upscaler
+    families = {a.pid_latent_format for a in Arch.list() if a.pid_latent_format}
+    return {
+        resource_id(kind, Arch.all, f"pid_{f}"): _find_model(model_list, kind, Arch.all, f"pid_{f}")
+        for f in families
+    }
 
 
 def _find_style_models(model_list: Sequence[str]):

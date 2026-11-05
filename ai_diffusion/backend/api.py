@@ -20,6 +20,7 @@ class WorkflowKind(Enum):
     upscale_tiled = 5
     control_image = 6
     custom = 7
+    upscale_pid = 8
 
 
 @dataclass
@@ -164,6 +165,9 @@ class InpaintParams:
 class UpscaleInput:
     model: str = ""  # if empty do tiled refine without upscale model
     tile_overlap: int = -1
+    refine: bool = True  # PiD upscale: run a diffusion refine pass before upscaling
+    refine_scale: float = 1.0  # PiD upscale: refine resolution relative to the input image
+    pid_tile_size: int = 2048  # PiD upscale: tile size in output pixels
 
 
 @dataclass
@@ -250,6 +254,8 @@ class WorkflowInput:
         if self.kind is WorkflowKind.control_image:
             return 1
         if self.kind is WorkflowKind.upscale_simple:
+            return 2
+        if self.kind is WorkflowKind.upscale_pid and not ensure(self.upscale).refine:
             return 2
 
         def cost_factor(batch: int, extent: Extent, steps: int):

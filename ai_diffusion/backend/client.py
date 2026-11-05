@@ -366,6 +366,34 @@ class ModelDict:
         return True
 
 
+pid_upscale_node = "VerigenPiDTiledUpscale"
+pid_text_encoder = "gemma_2_2b"
+
+
+def pid_upscale_status(models: ClientModels | None, arch: Arch) -> tuple[bool, str]:
+    """Checks if PiD (Pixel Diffusion) latent upscale can be used for the given architecture.
+    Returns (available, reason) - reason describes what is missing. Never raises."""
+    try:
+        if models is None:
+            return False, _("Not connected")
+        if pid_upscale_node not in models.node_inputs:
+            return False, _("Requires the ComfyUI-verigen custom node") + f" ({pid_upscale_node})"
+        family = arch.pid_latent_format
+        if family is None:
+            return False, _("No PiD model available for") + f" {arch.value}"
+        if models.find(ResourceId(ResourceKind.upscaler, Arch.all, f"pid_{family}")) is None:
+            return False, _(
+                "PiD 4-step model not found"
+            ) + f" (diffusion_models: pid*{family}*4step)"
+        te_id = ResourceId(ResourceKind.text_encoder, Arch.all, pid_text_encoder)
+        if models.find(te_id) is None:
+            return False, _("PiD text encoder not found") + f" ({pid_text_encoder})"
+        return True, ""
+    except Exception as e:
+        log.warning(f"Failed to check PiD upscale availability: {e}")
+        return False, _("PiD upscale unavailable")
+
+
 class TranslationPackage(NamedTuple):
     code: str
     name: str

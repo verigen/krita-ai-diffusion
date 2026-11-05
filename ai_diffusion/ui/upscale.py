@@ -1,5 +1,5 @@
 from PyQt6.QtCore import QEvent, QMetaObject, Qt, pyqtSignal
-from PyQt6.QtGui import QCursor, QEnterEvent
+from PyQt6.QtGui import QCursor, QEnterEvent, QStandardItemModel
 from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -13,10 +13,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..backend.client import pid_upscale_status
 from ..backend.resources import ControlMode, UpscalerName
+from ..backend.workflow import (
+    pid_scale_factor,
+    pid_tile_count,
+    pid_tile_sizes,
+    pid_upscale_extent,
+)
 from ..localization import translate as _
 from ..model.jobs import JobKind
-from ..model.model import DocumentModel, TileOverlapMode
+from ..model.model import DocumentModel, TileOverlapMode, UpscaleMethod
 from ..model.properties import Bind, Binding, bind, bind_combo, bind_toggle
 from ..model.root import root
 from . import theme
@@ -126,6 +133,7 @@ class UpscaleWidget(QWidget):
 
         self.workspace_select = WorkspaceSelectWidget(self)
         self.model_select = QComboBox(self)
+        self.model_select.currentIndexChanged.connect(self._change_upscaler)
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.workspace_select)
         model_layout.addWidget(self.model_select)
@@ -134,6 +142,27 @@ class UpscaleWidget(QWidget):
         self.factor_widget = FactorWidget(self)
         self.factor_widget.value_changed.connect(self._update_factor)
         layout.addWidget(self.factor_widget)
+
+        self.pid_summary = QLabel(self)
+        self.pid_summary.setStyleSheet(f"color: {theme.grey};")
+        self.pid_summary.setWordWrap(True)
+        layout.addWidget(self.pid_summary)
+
+        self.pid_tile_row = QWidget(self)
+        self.pid_tile_combo = QComboBox(self)
+        for size in pid_tile_sizes:
+            self.pid_tile_combo.addItem(f"{size} px", size)
+        self.pid_tile_combo.currentIndexChanged.connect(self._change_pid_tile_size)
+        pid_tile_layout = QHBoxLayout(self.pid_tile_row)
+        pid_tile_layout.setContentsMargins(0, 0, 0, 0)
+        pid_tile_layout.addWidget(QLabel(_("PiD Tile Size"), self), 1)
+        pid_tile_layout.addWidget(self.pid_tile_combo, 1)
+        self.pid_tile_row.setToolTip(
+            _(
+                "Size of the tiles PiD renders, in output pixels. Larger tiles mean fewer passes and less seam blending, but need more VRAM."
+            )
+        )
+        layout.addWidget(self.pid_tile_row)
 
         self.refinement_checkbox = QGroupBox(_("Refine upscaled image"), self)
         self.refinement_checkbox.setCheckable(True)
@@ -145,7 +174,9 @@ class UpscaleWidget(QWidget):
         strength_layout.addWidget(self.strength_slider.widget(), 3)
 
         self.unblur_slider = StrengthWidget(range=(0.0, 1.0), prefix=False)
-        unblur_layout = QHBoxLayout()
+        self.unblur_row = QWidget(self)
+        unblur_layout = QHBoxLayout(self.unblur_row)
+        unblur_layout.setContentsMargins(0, 0, 0, 0)
         unblur_layout.addWidget(QLabel(_("Image guidance"), self), 1)
         unblur_layout.addWidget(self.unblur_slider.widget(), 3)
         root.connection.models_changed.connect(self._update_style)
@@ -159,10 +190,32 @@ class UpscaleWidget(QWidget):
         self.overlap_input.setSingleStep(8)
         self.overlap_input.setSuffix(" px")
         self.overlap_input.setEnabled(False)
-        overlap_layout = QHBoxLayout()
+        self.overlap_row = QWidget(self)
+        overlap_layout = QHBoxLayout(self.overlap_row)
+        overlap_layout.setContentsMargins(0, 0, 0, 0)
         overlap_layout.addWidget(QLabel(_("Tile Overlap"), self), 2)
         overlap_layout.addWidget(self.overlap_custom_combo)
         overlap_layout.addWidget(self.overlap_input)
+
+        self.refine_scale_row = QWidget(self)
+        self.refine_scale_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.refine_scale_slider.setRange(10, 20)
+        self.refine_scale_slider.setSingleStep(1)
+        self.refine_scale_slider.setPageStep(1)
+        self.refine_scale_slider.valueChanged.connect(self._change_refine_scale)
+        self.refine_scale_value = QLabel("1.5x", self)
+        self.refine_scale_value.setMinimumWidth(30)
+        refine_scale_layout = QHBoxLayout(self.refine_scale_row)
+        refine_scale_layout.setContentsMargins(0, 0, 0, 0)
+        refine_scale_label = QLabel(_("Resolution"), self)
+        refine_scale_layout.addWidget(refine_scale_label, 1)
+        refine_scale_layout.addWidget(self.refine_scale_slider, 3)
+        refine_scale_layout.addWidget(self.refine_scale_value)
+        self.refine_scale_row.setToolTip(
+            _(
+                "Resolution of the refine pass relative to the canvas, before PiD upscale. Higher values add more detail but are slower. Limited by the maximum pixel count setting."
+            )
+        )
 
         self.use_prompt_switch = SwitchWidget(self)
         self.use_prompt_switch.toggled.connect(self._update_prompt)
@@ -180,10 +233,12 @@ class UpscaleWidget(QWidget):
         group_layout = QVBoxLayout(self.refinement_checkbox)
         group_layout.addWidget(self.style_select)
         group_layout.addLayout(strength_layout)
-        group_layout.addLayout(unblur_layout)
-        group_layout.addLayout(overlap_layout)
+        group_layout.addWidget(self.refine_scale_row)
+        group_layout.addWidget(self.unblur_row)
+        group_layout.addWidget(self.overlap_row)
         group_layout.addLayout(prompt_layout)
         self.refinement_checkbox.setLayout(group_layout)
+        self.refinement_checkbox.toggled.connect(self._update_method)
         layout.addWidget(self.refinement_checkbox)
 
         self.upscale_button = GenerateButton(JobKind.upscaling, self)
@@ -221,7 +276,14 @@ class UpscaleWidget(QWidget):
             self._model = model
             self._model_bindings = [
                 bind(model, "workspace", self.workspace_select, "value", Bind.one_way),
-                bind_combo(model.upscale, "upscaler", self.model_select),
+                model.upscale.upscaler_changed.connect(self._select_upscaler),
+                model.upscale.method_changed.connect(self._select_upscaler),
+                model.upscale.method_changed.connect(self._update_method),
+                model.upscale.refine_scale_changed.connect(self._update_refine_scale),
+                model.upscale.pid_tile_size_changed.connect(self._update_pid_tile_size),
+                model.upscale.use_diffusion_changed.connect(self._update_summary),
+                model.upscale.factor_changed.connect(self._update_summary),
+                model.upscale.target_extent_changed.connect(self._update_summary),
                 bind(model.upscale, "factor", self.factor_widget, "value"),
                 bind_toggle(model.upscale, "use_diffusion", self.refinement_checkbox),
                 bind(model, "style", self.style_select, "value"),
@@ -239,12 +301,18 @@ class UpscaleWidget(QWidget):
                 model.regions.removed.connect(self._update_prompt),
                 model.progress_changed.connect(self.update_progress),
                 model.style_changed.connect(self._update_style),
+                model.style_changed.connect(self._update_pid_item),
             ]
             self.upscale_button.model = model
             self.queue_button.model = model
             self._update_prompt()
             self._update_style()
             self._update_overlap()
+            self._update_pid_item()
+            self._select_upscaler()
+            self._update_refine_scale()
+            self._update_pid_tile_size()
+            self._update_method()
             self.update_progress()
 
     def update_models(self):
@@ -268,8 +336,116 @@ class UpscaleWidget(QWidget):
                         pass
                     else:
                         self.model_select.addItem(file, file)
-                selected = self.model_select.findData(self.model.upscale.upscaler)
-                self.model_select.setCurrentIndex(max(selected, 0))
+                self.model_select.insertSeparator(self.model_select.count())
+                self.model_select.addItem(_("PiD (latent upscale)"), _pid_item)
+            self._update_pid_item()
+            self._select_upscaler()
+            self._update_method()
+
+    def _select_upscaler(self, *_args):
+        upscale = self.model.upscale
+        data = _pid_item if upscale.method is UpscaleMethod.pid else upscale.upscaler
+        selected = self.model_select.findData(data)
+        with SignalBlocker(self.model_select):
+            self.model_select.setCurrentIndex(max(selected, 0))
+
+    def _change_upscaler(self, index: int):
+        data = self.model_select.itemData(index)
+        if data == _pid_item:
+            self.model.upscale.method = UpscaleMethod.pid
+        elif data:
+            self.model.upscale.method = UpscaleMethod.model
+            self.model.upscale.upscaler = data
+
+    def _update_pid_item(self, *_args):
+        index = self.model_select.findData(_pid_item)
+        if index < 0:
+            return
+        client = root.connection.client_if_connected
+        available, reason = pid_upscale_status(client.models if client else None, self.model.arch)
+        item_model = self.model_select.model()
+        if isinstance(item_model, QStandardItemModel) and (item := item_model.item(index)):
+            item.setEnabled(available or self.model.upscale.method is UpscaleMethod.pid)
+        tooltip = _(
+            "Upscale the latent with a PiD (Pixel Diffusion) model and decode directly at high resolution. The style's model is used for the optional refine pass, its VAE family selects the PiD model."
+        )
+        if not available:
+            tooltip = _("Unavailable") + f": {reason}"
+        self.model_select.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
+        self._update_summary()
+
+    def _update_method(self, *_args):
+        is_pid = self.model.upscale.method is UpscaleMethod.pid
+        self.unblur_row.setVisible(not is_pid)
+        self.overlap_row.setVisible(not is_pid)
+        self.refine_scale_row.setVisible(is_pid)
+        self.pid_summary.setVisible(is_pid)
+        self.pid_tile_row.setVisible(is_pid)
+        if is_pid:
+            self.refinement_checkbox.setTitle(_("Refine before upscale"))
+            # PiD needs the style (VAE family) even if refinement is disabled
+            self.style_select.setEnabled(True)
+        else:
+            self.refinement_checkbox.setTitle(_("Refine upscaled image"))
+            self.style_select.setEnabled(self.refinement_checkbox.isChecked())
+        self._update_summary()
+
+    def _update_refine_scale(self, *_args):
+        value = round(self.model.upscale.refine_scale * 10)
+        if self.refine_scale_slider.value() != value:
+            with SignalBlocker(self.refine_scale_slider):
+                self.refine_scale_slider.setValue(value)
+        self.refine_scale_value.setText(f"{value / 10:.1f}x")
+        self._update_summary()
+
+    def _change_refine_scale(self, value: int):
+        self.model.upscale.refine_scale = value / 10
+        self._update_refine_scale()
+
+    def _update_pid_tile_size(self, *_args):
+        index = self.pid_tile_combo.findData(self.model.upscale.pid_tile_size)
+        if index < 0:  # persisted value not in list: fall back to default
+            index = self.pid_tile_combo.findData(2048)
+        if self.pid_tile_combo.currentIndex() != index:
+            with SignalBlocker(self.pid_tile_combo):
+                self.pid_tile_combo.setCurrentIndex(index)
+        self._update_summary()
+
+    def _change_pid_tile_size(self, index: int):
+        if size := self.pid_tile_combo.itemData(index):
+            self.model.upscale.pid_tile_size = size
+        self._update_summary()
+
+    def _update_summary(self, *_args):
+        upscale = self.model.upscale
+        if upscale.method is not UpscaleMethod.pid:
+            return
+        client = root.connection.client_if_connected
+        available, reason = pid_upscale_status(client.models if client else None, self.model.arch)
+        if not available:
+            self.pid_summary.setText(_("PiD upscale unavailable") + f": {reason}")
+            return
+        try:
+            canvas = self.model.document.extent
+            max_pixels = client.performance_settings.max_pixel_count if client else 6
+            e = pid_upscale_extent(
+                canvas,
+                upscale.factor,
+                upscale.use_diffusion,
+                upscale.refine_scale,
+                self.model.arch,
+                max_pixels,
+            )
+            pid_out = e.initial * pid_scale_factor
+            tiles = pid_tile_count(e.initial, upscale.pid_tile_size)
+            tiles_text = _("1 tile") if tiles == 1 else f"{tiles} " + _("tiles")
+            step = _("Refine at") if upscale.use_diffusion else _("Encode")
+            self.pid_summary.setText(
+                f"{step} {e.initial.width}x{e.initial.height} → PiD {pid_out.width}x{pid_out.height}"
+                f" ({tiles_text}) → {e.target.width}x{e.target.height}"
+            )
+        except Exception as e:
+            self.pid_summary.setText(_("PiD upscale unavailable") + f": {e}")
 
     def update_progress(self):
         self.progress_bar.setValue(int(self.model.progress * 100))
@@ -328,6 +504,9 @@ class UpscaleWidget(QWidget):
             self.upscale_button.operation = _("Refine")
         else:
             self.upscale_button.operation = _("Upscale")
+
+
+_pid_item = "__pid_latent_upscale__"
 
 
 def _upscaler_order(filename: str):
