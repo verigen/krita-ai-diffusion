@@ -23,7 +23,7 @@ Keep this file up to date whenever a fork feature is added, changed or dropped.
 | F6 | FLUX.3 [klein] model support | 53f211f | model | **upstream PR #2641** (draft) |
 | F7 | MOSS-Image model support | e2b5552 | model | **upstream PR #2640** (draft), #2643 (qt5) |
 | F8 | Fibo 2.0 model support | a49d8df | model | **upstream PR #2646** (draft) |
-| F9 | PiD latent upscale method (Upscale workspace) | 108415c | feature | none known; upstream PR #2619 (RTX VSR) also edits `ui/upscale.py` |
+| F9 | PiD latent upscale method (Upscale workspace) | 108415c | feature | **to be dropped on next rebase** (poor results) |
 
 Merge commits af755ac and 480e679 only combine the F1 and F2 feature branches and add no content.
 
@@ -145,14 +145,21 @@ one rewrites the same lines and bumps `comfy_version`.
 **Rebase risk:** high once the upstream PRs land. Draft PRs #2641 (Flux 3 Klein), #2640 (MOSS) and
 #2646 (Fibo 2.0) implement the same models.
 
-**Default decision, per model:**
-- upstream merged the model → **drop** the fork version and take upstream's `Arch` name, resource ids
-  and style files. Before dropping, check fork-only details worth fusing into upstream's version:
-  edit-style presets, sampler presets, filename aliases (e.g. the `qwen_35_9b` alias list) and icons.
-  Users' saved styles reference the arch string (`flux3`, `moss-image`, `fibo2`), so check whether
-  upstream uses the same strings. If not, either add an alias in `Arch.from_string` or accept that
-  those styles break.
+**Policy, per model:**
 - upstream has not merged it → **keep**, rebased onto upstream's current `Arch` list.
+- upstream merged the model → prefer upstream's version and drop the fork commit, **but only after
+  proving the two are equivalent**. Compare them point by point:
+  - supported modes: txt2img, img2img/refine, inpaint, edit, regions, control layers, alpha
+  - text encoder and VAE resource ids, plus the filename aliases (e.g. the fork's `qwen_35_9b` alias list)
+  - workflow nodes and parameters: loader, encode, sampling, schedule, CFG/shift
+  - style presets (normal and edit), sampler presets, icons
+  - the arch string stored in users' saved styles (`flux3`, `moss-image`, `fibo2`)
+  - the required `comfy_version` and custom-node pins
+- If everything matches or upstream is a strict superset, drop the fork commit. If anything is
+  different or missing upstream, or equivalence can't be shown, **stop and discuss with the user
+  before rebasing**. Present the differences and suggest which fork improvements to keep (fused on
+  top of upstream's version) and which to drop.
+- Never silently drop the fork version, and never keep both side by side.
 - `comfy_version`: always take the newer of upstream's and the fork's pins. Never drop a pin a kept
   model needs.
 
@@ -187,7 +194,11 @@ names (`self.style`, `model.style_changed.connect(self._update_pid_item)`), so t
 during the rebase. Upstream PR #2619 (RTX VSR upscale) also adds an upscale method in the same widget
 and model list. If it lands, combine both methods in one list.
 
-**Default decision:** keep.
+**Decision: DROP on the next rebase, before any other feature.** The results were disappointing
+(decided 2026-11-10). Drop all of commit 108415c: the `UpscaleInput` fields (`refine`,
+`refine_scale`, `pid_tile_size`), the `pid_*` workflow functions, the node wrappers, the resources,
+the client detection, the model dispatch and the UI item, plus its tests. Afterwards, grep for `pid`
+to confirm nothing is left. Commits made later that build on F9 (if any) need to be checked as well.
 
 ---
 
@@ -198,8 +209,10 @@ and model list. If it lands, combine both methods in one list.
    grep for the feature's key identifiers (`Arch.flux3`, `ensure_rgb`, `get_selection_modifiers(ctx`,
    `PromptLibrary`, `llm_client`, `pid_`).
 3. Record a decision per feature (keep / drop / fuse) in the table below before rewriting history.
-4. Rebase in the order F3 → F5 → F4 → F6 → F7 → F8 → F1 → F2 → F9 (fixes first, then models,
-   then UI features), dropping features as decided.
+   For overlapping models (F6–F8), follow the equivalence policy. Anything that isn't proven
+   equivalent has to be discussed with the user before rebasing.
+4. Drop F9 first. Then rebase in the order F3 → F5 → F4 → F6 → F7 → F8 → F1 → F2 (fixes first,
+   then models, then UI features), dropping features as decided.
 5. Run `ruff check`, `ruff format`, `pyright`, `pytest tests --ci` and `python scripts/design.py --exit`.
    If F3, F6–F9 or workflows were touched, also run `pytest tests/test_workflow.py`.
 6. Update this manifest: new commit hashes, removed features, new overlaps.
@@ -208,4 +221,5 @@ and model list. If it lands, combine both methods in one list.
 
 | Date | Upstream target | Feature | Decision | Notes |
 |------|-----------------|---------|----------|-------|
-| | | | | |
+| 2026-11-10 | next rebase | F9 PiD upscale | drop (first) | results disappointing |
+| 2026-11-10 | standing policy | F6–F8 models | prefer upstream only if proven equivalent | otherwise discuss with the user first |
