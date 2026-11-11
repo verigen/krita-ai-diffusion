@@ -4,7 +4,7 @@ Lists every change this fork (`verigen/krita-ai-diffusion`) carries on top of up
 (`Acly/krita-ai-diffusion`). Use it before each rebase to decide, for each feature, whether to
 **keep**, **drop** or **fuse** it with an upstream equivalent.
 
-- Snapshot: 2026-11-10, branch `qt6-feature/pid-upscale` (HEAD `108415c`)
+- Snapshot: 2026-11-11, branch `qt6-feature/minimax-h3-image` (HEAD `57fc4f1`)
 - Base: `upstream/main` @ `828b70c` (= `v1.54.0-pre`, Qt6 / Krita 6 only)
 - Next upstream target: `upstream/next` (36 commits, Generation workspace UI redesign, still 1.54.0)
 
@@ -24,6 +24,7 @@ Keep this file up to date whenever a fork feature is added, changed or dropped.
 | F7 | MOSS-Image model support | e2b5552 | model | **upstream PR #2640** (draft), #2643 (qt5) |
 | F8 | Fibo 2.0 model support | a49d8df | model | **upstream PR #2646** (draft) |
 | F9 | PiD latent upscale method (Upscale workspace) | 108415c | feature | **to be dropped on next rebase** (poor results) |
+| F10 | MiniMax-H3-Image model support (T2I + edit, always 16MP) | 57fc4f1 | model | none known (2026-11-11: no upstream PR or commit) |
 
 Merge commits af755ac and 480e679 only combine the F1 and F2 feature branches and add no content.
 
@@ -117,25 +118,49 @@ in `upstream/next` (`get_selection_modifiers(ctx, ...)`).
 
 **Default decision:** keep. Good candidate for an upstream PR; once merged upstream, drop it.
 
-## F6 / F7 / F8: New model architectures
+## F6 / F7 / F8 / F10: New model architectures
 
-All three follow the same pattern and build on each other in this order: F6, then F7, then F8. Each
+All four follow the same pattern and build on each other in this order: F6, then F7, then F8, then F10. Each
 one rewrites the same lines and bumps `comfy_version`.
 
-| | F6 FLUX.3 [klein] (53f211f) | F7 MOSS-Image (e2b5552) | F8 Fibo 2.0 (a49d8df) |
-|-|-|-|-|
-| `Arch` | `flux3` ("Flux 3 Klein"), `is_flux3` | `moss` ("MOSS Image") | `fibo2` ("Fibo 2") |
-| Text encoder | `qwen_3vl_4b` | `qwen_35_9b` (new resource id + filename aliases) | `qwen_3vl_4b` |
-| VAE | `flux2` | `flux2-vae_small` / `flux2` | `flux2` |
-| Edit-capable | yes (`edit-flux3.json`) | no | yes (`edit-fibo2.json`) |
-| Styles | `flux3-klein.json` | `moss-image.json` | `fibo2.json` |
-| comfy_version | → 45bf90d | → eb460bb | → 87ed5a0 |
+| | F6 FLUX.3 [klein] (53f211f) | F7 MOSS-Image (e2b5552) | F8 Fibo 2.0 (a49d8df) | F10 MiniMax-H3-Image (57fc4f1) |
+|-|-|-|-|-|
+| `Arch` | `flux3` ("Flux 3 Klein"), `is_flux3` | `moss` ("MOSS Image") | `fibo2` ("Fibo 2") | `minimax_h3` ("MiniMax H3 Image") |
+| Text encoder | `qwen_3vl_4b` | `qwen_35_9b` (new resource id + filename aliases) | `qwen_3vl_4b` | `qwen_3vl_32b_minimax` (new resource id + aliases), CLIP type `minimax` |
+| VAE | `flux2` | `flux2-vae_small` / `flux2` | `flux2` | `minimax_h3_image_vae` |
+| Edit-capable | yes (`edit-flux3.json`) | no | yes (`edit-fibo2.json`) | yes, same checkpoint (`supports_edit`, no edit style) |
+| Styles | `flux3-klein.json` | `moss-image.json` | `fibo2.json` | `minimax-h3-image.json` (int8_convrot and w4a8 quants) |
+| comfy_version | → 45bf90d | → eb460bb | → 87ed5a0 | → 989d93d (v0.45.0) |
 
 **Files touched by each:** `backend/api.py`, `backend/comfy_workflow.py` (loader/encode nodes),
 `backend/resources.py` (Arch enum, resource ids, required models, `comfy_version`),
 `backend/workflow.py`, `presets/samplers.json`, `icons/sd-version-*-{dark,light}.svg`,
 `ui/theme.py`, `tests/test_resources.py`. F6 also touches `ui/style.py`. F7 also touches
-`backend/comfy_client.py`.
+`backend/comfy_client.py`. F10 also touches `backend/comfy_client.py` (text encoder list),
+`backend/resolution.py`, `tests/test_resolution.py` and `tests/test_workflow.py`.
+
+**F10 specifics (must survive any rebase or upstream fusion):**
+- **16MP rule.** MiniMax-H3-Image is native between 4 and 20MP and gives the best results at 16MP.
+  `resolution.prepare_diffusion_input` returns early via `_prepare_minimax_h3`: initial = desired is
+  the canvas scaled to `minimax_h3_pixels` (16MP), as a multiple of 32 (`diffusion_multiple`).
+  It ignores the resolution multiplier, max pixel count and batch size settings, and it applies to
+  generate, refine/edit, inpaint crops and Live.
+- **No 16MP image over the network.** The client never upscales. Images and masks are uploaded at
+  canvas or crop size, and scaled to 16MP in the graph (`scale_to_initial`). Results are scaled back
+  to the target in the graph (`scale_to_target`) before `ETN_SaveImageCache`. Canvases above 16MP are
+  downscaled before upload and upscaled back with the fast upscaler.
+- **5D latent.** The model needs a `[B,24,1,H/16,W/16]` latent. `generate()` uses the empty latent
+  returned by `MiniMaxH3ImageConditioning` (`encode_prompt(..., extent=)`) instead of
+  `empty_latent_image`. Refine/inpaint VAE-encode (the VAE has `latent_dim = 3`), and
+  `SetLatentNoiseMask` works on 5D latents.
+- `text_encode_minimax_h3` always passes an explicit width/height (an extent, or `GetImageSize` of the
+  input). With 0 the node falls back to a 1024–2048 short edge. The negative prompt is
+  `ConditioningZeroOut` (cfg 1, 6-step euler/simple preset "MiniMax H3 - Euler").
+- The in-graph prompt expander from the reference workflows (TextGenerateV2 + Qwen3.5-9B) was left
+  out on purpose. Use F2 instead.
+- **Tooling dependency:** `verigen/comfyui-tooling-nodes` branch `feature/minimax-h3-image` (8ea598d)
+  maps `MiniMaxH3Image` → `minimax-h3-image`. It also has a key-based fallback (`detect_minimax_h3_image`)
+  so the quantized DiTs (int8_convrot, w4a8) are detected. Without it the checkpoint shows as unknown.
 
 **Shared hotspots** (these conflict with any upstream model addition): the `Arch` enum and `from_string`,
 `Arch.is_edit`-style predicates (`... or self.is_flux3 or self in (Arch.qwen2, Arch.fibo2)`),
@@ -206,12 +231,12 @@ to confirm nothing is left. Commits made later that build on F9 (if any) need to
 
 1. `git fetch upstream` and update the snapshot header (base commit, target branch).
 2. For each feature row, re-check upstream for overlap: open/merged PRs, `git log upstream/<target>`,
-   grep for the feature's key identifiers (`Arch.flux3`, `ensure_rgb`, `get_selection_modifiers(ctx`,
+   grep for the feature's key identifiers (`Arch.flux3`, `Arch.minimax_h3`, `ensure_rgb`, `get_selection_modifiers(ctx`,
    `PromptLibrary`, `llm_client`, `pid_`).
 3. Record a decision per feature (keep / drop / fuse) in the table below before rewriting history.
-   For overlapping models (F6–F8), follow the equivalence policy. Anything that isn't proven
+   For overlapping models (F6–F8, F10), follow the equivalence policy. Anything that isn't proven
    equivalent has to be discussed with the user before rebasing.
-4. Drop F9 first. Then rebase in the order F3 → F5 → F4 → F6 → F7 → F8 → F1 → F2 (fixes first,
+4. Drop F9 first. Then rebase in the order F3 → F5 → F4 → F6 → F7 → F8 → F10 → F1 → F2 (fixes first,
    then models, then UI features), dropping features as decided.
 5. Run `ruff check`, `ruff format`, `pyright`, `pytest tests --ci` and `python scripts/design.py --exit`.
    If F3, F6–F9 or workflows were touched, also run `pytest tests/test_workflow.py`.
@@ -223,3 +248,4 @@ to confirm nothing is left. Commits made later that build on F9 (if any) need to
 |------|-----------------|---------|----------|-------|
 | 2026-11-10 | next rebase | F9 PiD upscale | drop (first) | results disappointing |
 | 2026-11-10 | standing policy | F6–F8 models | prefer upstream only if proven equivalent | otherwise discuss with the user first |
+| 2026-11-11 | standing policy | F10 MiniMax-H3-Image | keep; same equivalence policy as F6–F8 | the 16MP rule and the no-16MP-over-network rule are required in any fused version |
