@@ -1520,3 +1520,82 @@ def test_upscale_pid_tile_size_in_graph():
     )
     pid = next(n for n in w.root.values() if n["class_type"] == "VerigenPiDTiledUpscale")
     assert pid["inputs"]["tile_size"] == 3072 and pid["inputs"]["overlap"] == 256
+
+
+def _minimax_models():
+    models = ClientModels()
+    models.checkpoints = {
+        "mm": CheckpointInfo(
+            "Minimax-H3-Image/minimax_h3_image_pruned_w4a8.safetensors",
+            Arch.minimax_h3,
+            FileFormat.diffusion,
+        )
+    }
+    models.resources[resource_id(ResourceKind.vae, Arch.minimax_h3, "default")] = (
+        "minimax_h3_image_vae_fp16.safetensors"
+    )
+    te_id = resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_32b_minimax")
+    models.resources[te_id] = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    return models
+
+
+@pytest.mark.parametrize("kind", [WorkflowKind.generate, WorkflowKind.refine])
+def test_minimax_h3_graph(kind: WorkflowKind):
+    models = _minimax_models()
+    style = Style(Path("minimax.json"))
+    style.checkpoints = ["mm"]
+    style.sampler, style.sampler_steps, style.cfg_scale = "MiniMax H3 - Euler", 6, 1.0
+    files = FileLibrary(FileCollection(), FileCollection())
+    canvas_extent = Extent(1024, 768)
+    canvas = canvas_extent if kind is WorkflowKind.generate else Image.create(canvas_extent)
+    cond = ConditioningInput("make the taxi red", edit_reference=kind is WorkflowKind.refine)
+    job = workflow.prepare(kind, canvas, cond, style, 1, models, files, default_perf)
+    assert job.images is not None
+    if job.images.initial_image is not None:  # uploaded at canvas size, never 16MP
+        assert job.images.initial_image.extent == canvas_extent
+
+    w = workflow.create(job, models)
+    nodes = w.root
+    by_class = lambda c: [n for n in nodes.values() if n["class_type"] == c]
+    clip = by_class("CLIPLoader")[0]["inputs"]
+    assert clip["type"] == "minimax" and "qwen3vl_32b_minimax" in clip["clip_name"]
+    (enc,) = by_class("MiniMaxH3ImageConditioning")
+    assert by_class("ConditioningZeroOut")
+    assert not by_class("EmptySD3LatentImage") and not by_class("EmptyLatentImage")
+    if kind is WorkflowKind.generate:
+        assert (enc["inputs"]["width"], enc["inputs"]["height"]) == (4640, 3488)
+        assert "images.image_1" not in enc["inputs"]
+    else:
+        assert "images.image_1" in enc["inputs"]
+        size_node = nodes[enc["inputs"]["width"][0]]
+        assert size_node["class_type"] == "GetImageSize"
+    # 16MP scaling happens in the graph, output is scaled back before it is sent
+    if kind is WorkflowKind.refine:
+        assert any(n["inputs"]["width"] == 4640 for n in by_class("ImageScale"))
+    (save,) = by_class("ETN_SaveImageCache")
+    final = nodes[save["inputs"]["images"][0]]
+    while final["class_type"] != "ImageScale":
+        final = nodes[next(v for v in final["inputs"].values() if isinstance(v, list))[0]]
+    assert (final["inputs"]["width"], final["inputs"]["height"]) == (1024, 768)
+
+
+def test_minimax_h3_inpaint_graph():
+    models = _minimax_models()
+    style = Style(Path("minimax.json"))
+    style.checkpoints = ["mm"]
+    files = FileLibrary(FileCollection(), FileCollection())
+    canvas = Image.create(Extent(1024, 768))
+    mask = Mask.rectangle(Bounds(100, 100, 256, 192), Bounds(60, 60, 336, 272))
+    cond = ConditioningInput("a red umbrella")
+    inpaint = detect_inpaint(InpaintMode.add_object, mask.bounds, Arch.minimax_h3, cond, 1.0)
+    job = workflow.prepare(
+        WorkflowKind.inpaint, canvas, cond, style, 1, models, files, default_perf, mask=mask,
+        inpaint=inpaint,
+    )  # fmt: skip
+    assert job.images and job.images.initial_image
+    assert job.images.initial_image.extent.pixel_count <= canvas.extent.pixel_count
+    assert job.extent.initial.pixel_count > 15 * 10**6
+    w = workflow.create(job, models)
+    classes = [n["class_type"] for n in w.root.values()]
+    assert "MiniMaxH3ImageConditioning" in classes and "SetLatentNoiseMask" in classes
+    assert "ETN_SaveImageCache" in classes

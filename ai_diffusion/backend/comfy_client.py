@@ -774,6 +774,7 @@ def _find_text_encoder_models(model_list: Sequence[str]):
         "qwen_3vl_4b",
         "qwen_3vl_8b",
         "qwen_35_9b",
+        "qwen_3vl_32b_minimax",
         "ministral",
         "gemma_2_2b",
     ]

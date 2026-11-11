@@ -390,3 +390,30 @@ def test_tile_layout(test_set):
         coord = layout.coord(i)
         assert layout.start(coord) == expected["start"]
         assert layout.end(coord) == expected["end"]
+
+
+@pytest.mark.parametrize(
+    "input", [Extent(1024, 768), Extent(512, 512), Extent(300, 1200), Extent(6000, 4000)]
+)
+def test_prepare_minimax_h3_16mp(input: Extent):
+    image = Image.create(input)
+    small_perf = PerformanceSettings(resolution_multiplier=0.5, max_pixel_count=2, batch_size=4)
+    r, batch = resolution.prepare_image(image, Arch.minimax_h3, dummy_style, small_perf)
+    initial = r.extent.initial
+    assert initial == r.extent.desired and initial.is_multiple_of(32)
+    assert 15.5 * 10**6 < initial.pixel_count < 17 * 10**6
+    assert abs(initial.width / initial.height - input.width / input.height) < 0.02
+    assert r.extent.target == input and batch == 1
+    # never upscaled on the client: upload is at most canvas size
+    assert r.initial_image and r.initial_image.extent == r.extent.input
+    assert r.extent.input.pixel_count <= input.pixel_count
+    if input.pixel_count <= initial.pixel_count:
+        assert r.extent.input == input
+    expected_scaling = ScaleMode.resize if input.pixel_count < 10**7 else ScaleMode.upscale_fast
+    assert ScaledExtent.from_input(r.extent).target_scaling is expected_scaling
+
+
+def test_prepare_minimax_h3_extent():
+    r, batch = resolution.prepare_extent(Extent(1024, 1024), Arch.minimax_h3, dummy_style, perf)
+    assert r.extent.initial == r.extent.desired == Extent(4000, 4000)
+    assert r.extent.input == r.extent.target == Extent(1024, 1024) and batch == 1

@@ -277,6 +277,8 @@ def _base_cost(arch: Arch):
         return 4
     if arch in (Arch.zimage, Arch.moss, Arch.fibo2):
         return 6
+    if arch is Arch.minimax_h3:
+        return 8  # always diffuses at ~16MP
     return 1
 
 

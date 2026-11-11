@@ -136,7 +136,12 @@ class ScaledExtent(NamedTuple):
 # Image resolution for diffusion should be divisible by this factor, either because it is the
 # required latent compression factor, or to avoid border artifacts with UNET models.
 def diffusion_multiple(arch: Arch):
-    return 32 if arch is Arch.qwen2 else 16
+    return 32 if arch in (Arch.qwen2, Arch.minimax_h3) else 16
+
+
+# MiniMax-H3-Image is native between 4MP and 20MP and has the highest fidelity at 16MP.
+# It always diffuses at this size; results are scaled to the requested size inside the workflow.
+minimax_h3_pixels = 16 * 10**6
 
 
 class CheckpointResolution(NamedTuple):
@@ -189,6 +194,9 @@ def prepare_diffusion_input(
     downscale=True,
     inpaint=False,
 ):
+    if arch is Arch.minimax_h3:
+        return _prepare_minimax_h3(extent, image)
+
     # Take settings into account to compute the desired resolution for diffusion.
     desired = apply_resolution_settings(extent, perf)
     mult = diffusion_multiple(arch)
@@ -231,6 +239,18 @@ def prepare_diffusion_input(
 
     batch = compute_batch_size(Extent.largest(initial, desired), 512, perf.batch_size)
     return ScaledExtent(input, initial, desired, extent), image, batch
+
+
+def _prepare_minimax_h3(extent: Extent, image: Image | None):
+    # Ignores resolution multiplier, max pixel count and batch size settings on purpose.
+    # Upscaling to diffusion resolution happens on the server, images are never sent larger
+    # than the canvas. Larger canvases are scaled down before upload to save bandwidth.
+    diffusion = extent.scale_to_pixel_count(minimax_h3_pixels).multiple_of(32)
+    input = extent
+    if image is not None and extent.pixel_count > diffusion.pixel_count:
+        input = diffusion
+        image = Image.scale(image, diffusion)
+    return ScaledExtent(input, diffusion, diffusion, extent), image, 1
 
 
 def prepare_extent(

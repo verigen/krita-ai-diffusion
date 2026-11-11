@@ -735,6 +735,28 @@ class ComfyWorkflow:
         positive, negative, _ = self.add("TextEncodeFibo2", 3, **args)
         return ConditioningOutput(positive, negative)
 
+    def text_encode_minimax_h3(
+        self,
+        clip: Output,
+        vae: Output | None,
+        images: list[Output] | None,
+        prompt: str | Output,
+        size: Extent | Output,
+    ):
+        """Returns conditioning and an empty (5D) latent with the extent of `size`."""
+        images = [] if images is None else images
+        args = {"clip": clip, "vae": vae, "prompt": prompt}
+        # Always pass explicit size: 0 makes the node rescale to a 1024-2048 short edge
+        if isinstance(size, Extent):
+            args["width"], args["height"] = size.width, size.height
+        else:
+            args["width"], args["height"], _ = self.add("GetImageSize", 3, image=size)
+        for i, image in enumerate(images):
+            args[f"images.image_{i + 1}"] = image
+        positive, latent = self.add("MiniMaxH3ImageConditioning", 2, **args)
+        negative = self.add("ConditioningZeroOut", 1, conditioning=positive)
+        return ConditioningOutput(positive, negative), latent
+
     def background_region(self, conditioning: Output):
         return self.add("ETN_BackgroundRegion", 1, conditioning=conditioning)
 

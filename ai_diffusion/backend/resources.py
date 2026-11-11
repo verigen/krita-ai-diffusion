@@ -13,7 +13,7 @@ from typing import Any, NamedTuple
 version = "1.54.0"
 
 comfy_url = "https://github.com/comfyanonymous/ComfyUI"
-comfy_version = "87ed5a066d9c4660ef42100fd01a888da6994856"
+comfy_version = "989d93d0d968e704c589ce0146bb18c77f6b50cc"
 
 
 class CustomNode(NamedTuple):
@@ -96,6 +96,7 @@ class Arch(Enum):
     krea2 = "Krea 2"
     moss = "MOSS Image"
     fibo2 = "Fibo 2"
+    minimax_h3 = "MiniMax H3 Image"
 
     auto = "Automatic"
     all = "All"
@@ -150,6 +151,8 @@ class Arch(Enum):
             return Arch.moss
         if string == "fibo2":
             return Arch.fibo2
+        if string in {"minimax-h3-image", "minimax_h3_image"}:
+            return Arch.minimax_h3
         return None
 
     @staticmethod
@@ -224,7 +227,12 @@ class Arch(Enum):
 
     @property
     def supports_edit(self):  # includes text-to-image models that can also edit
-        return self.is_edit or self.is_flux2 or self.is_flux3 or self in (Arch.qwen2, Arch.fibo2)
+        return (
+            self.is_edit
+            or self.is_flux2
+            or self.is_flux3
+            or self in (Arch.qwen2, Arch.fibo2, Arch.minimax_h3)
+        )
 
     @property
     def is_sdxl_like(self):
@@ -278,6 +286,8 @@ class Arch(Enum):
                 return ["qwen_3vl_4b"]
             case Arch.moss:
                 return ["qwen_35_9b"]
+            case Arch.minimax_h3:
+                return ["qwen_3vl_32b_minimax"]
             case _:
                 raise ValueError(f"Unsupported architecture: {self}")
 
@@ -306,6 +316,7 @@ class Arch(Enum):
             Arch.flux3,
             Arch.moss,
             Arch.fibo2,
+            Arch.minimax_h3,
         ]
 
 
@@ -449,7 +460,7 @@ class ControlMode(Enum):
 
     def can_substitute_instruction(self, arch: Arch):
         """True if this control mode is covered by instruction-following edit models."""
-        if arch.is_flux2 or arch.is_flux3 or arch in (Arch.qwen2, Arch.fibo2):
+        if arch.is_flux2 or arch.is_flux3 or arch in (Arch.qwen2, Arch.fibo2, Arch.minimax_h3):
             return self in [
                 ControlMode.style,
                 ControlMode.composition,
@@ -855,6 +866,7 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_4b"): ["qwen3vl_4b", "qwen_3vl_4b", "qwen3-vl-4b"],
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_8b"): ["qwen3vl_8b", "qwen_3vl_8b", "qwen3-vl-8b"],
     resource_id(ResourceKind.text_encoder, Arch.all, "qwen_35_9b"): ["qwen3.5_9b", "qwen_3.5_9b", "qwen3.5-9b", "qwen35_9b", "qwen_35_9b"],
+    resource_id(ResourceKind.text_encoder, Arch.all, "qwen_3vl_32b_minimax"): ["qwen3vl_32b_minimax", "qwen_3vl_32b_minimax", "qwen3-vl-32b-minimax"],
     resource_id(ResourceKind.text_encoder, Arch.all, "gemma_2_2b"): ["gemma_2_2b"],
     # Only the 4-step distilled PiD models: the workflow uses fixed 4-step LCM sampling
     resource_id(ResourceKind.upscaler, Arch.all, "pid_qwenimage"): ["pid*qwenimage*4step"],
@@ -880,6 +892,7 @@ search_paths: dict[str, list[str]] = {
     resource_id(ResourceKind.vae, Arch.flux3, "default"): ["flux2"],
     resource_id(ResourceKind.vae, Arch.moss, "default"): ["flux2-vae_small", "flux2"],
     resource_id(ResourceKind.vae, Arch.fibo2, "default"): ["flux2"],
+    resource_id(ResourceKind.vae, Arch.minimax_h3, "default"): ["minimax_h3_image_vae", "minimax-h3-image-vae"],
 }
 # fmt: on
 
@@ -925,6 +938,8 @@ required_resource_ids = {
     ResourceId(ResourceKind.vae, Arch.moss, "default"),
     ResourceId(ResourceKind.text_encoder, Arch.fibo2, "qwen_3vl_4b"),
     ResourceId(ResourceKind.vae, Arch.fibo2, "default"),
+    ResourceId(ResourceKind.text_encoder, Arch.minimax_h3, "qwen_3vl_32b_minimax"),
+    ResourceId(ResourceKind.vae, Arch.minimax_h3, "default"),
 }
 
 recommended_resource_ids = [

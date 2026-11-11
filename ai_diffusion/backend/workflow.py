@@ -169,6 +169,8 @@ def load_checkpoint_with_lora(w: ComfyWorkflow, checkpoint: CheckpointInput, mod
                 clip = w.load_clip(te["qwen_35_9b"], type="moss_image")
             case Arch.fibo2:
                 clip = w.load_clip(te["qwen_3vl_4b"], type="fibo2")
+            case Arch.minimax_h3:
+                clip = w.load_clip(te["qwen_3vl_32b_minimax"], type="minimax")
             case Arch.qwen2:
                 clip = w.load_clip(te["qwen_3vl_8b"], type="qwen_image")
             case _:
@@ -537,9 +539,12 @@ def encode_prompt(
     regions: Output | None,
     image: Output | None = None,
     tiled_vae: bool = False,
+    extent: Extent | None = None,
 ):
     """Runs text and image encoder (VLM) to produce embeddings from prompt and reference images.
     Returns positive/negative conditioning, and sometimes the VAE-encoded `image` for reuse.
+    MiniMax H3 is encoded at the size of `image` (or `extent`) and returns an empty latent of
+    that size for text-to-image (no `image`).
     """
     arch = clip.arch
     ref_images = [image] if cond.edit_reference and image is not None else []
@@ -556,6 +561,12 @@ def encode_prompt(
             negative = cond.negative.prepare(w) if cond.negative else ""
             prompt = w.text_encode_fibo2(clip.model, vae, ref_images, positive, negative)
             return prompt, None
+        elif arch is Arch.minimax_h3:
+            positive = cond.positive.prepare(w, cond.style_prompt)
+            size = image if image is not None else extent
+            assert size is not None, "MiniMax H3 Image needs an input image or extent"
+            prompt, latent = w.text_encode_minimax_h3(clip.model, vae, ref_images, positive, size)
+            return prompt, (latent if image is None else None)  # empty latent for txt2img only
         else:
             positive = cond.positive.encode(w, clip, cond.style_prompt, ref_images)
             negative = cond.negative.encode(w, clip) if cond.negative else positive
@@ -1007,8 +1018,14 @@ def generate(
     model_orig = copy(model)
     model, regions = apply_attention_mask(w, model, cond, clip, extent.initial)
     model = apply_regional_ip_adapter(w, model, cond.regions, extent.initial, models)
-    latent = w.empty_latent_image(extent.initial, models.arch, misc.batch_count)
-    prompt, _ = encode_prompt(w, cond, clip, vae, regions, None, checkpoint.tiled_vae)
+    prompt, cond_latent = encode_prompt(
+        w, cond, clip, vae, regions, None, checkpoint.tiled_vae, extent=extent.initial
+    )
+    if models.arch is Arch.minimax_h3:
+        assert cond_latent is not None
+        latent = w.batch_latent(cond_latent, misc.batch_count)
+    else:
+        latent = w.empty_latent_image(extent.initial, models.arch, misc.batch_count)
     model, prompt = apply_control(w, model, prompt, cond.all_control, extent.initial, vae, models)
     sample_params = _sampler_params(sampling, extent.initial)
     out_latent = w.sampler_custom_advanced(model, prompt, latent, models.arch, **sample_params)
@@ -1247,7 +1264,9 @@ def inpaint(
 
         model, regions = apply_attention_mask(w, model, cond_upscale, clip, shape)
         model = apply_regional_ip_adapter(w, model, cond_upscale.regions, shape, models)
-        prompt_up, _ = encode_prompt(w, cond_upscale, clip, vae, regions)
+        prompt_up, _ = encode_prompt(
+            w, cond_upscale, clip, vae, regions, extent=upscale_extent.desired
+        )
 
         if params.use_inpaint_model and models.control.find(ControlMode.inpaint) is not None:
             hires_image = ImageOutput(images.hires_image)
@@ -1667,6 +1686,7 @@ _layer_replace = {
     Arch.qwen_e_p: "Picture {}",
     Arch.qwen2: "<image{}>",
     Arch.fibo2: "<image_{}>",
+    Arch.minimax_h3: "<Picture {}>",
 }
 _control_instructions = {
     ControlMode.style: "Apply the style from {}.",

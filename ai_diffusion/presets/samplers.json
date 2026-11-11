@@ -151,5 +151,12 @@
         "steps": 4,
         "minimum_steps": 4,
         "cfg": 1.0
+    },
+    "MiniMax H3 - Euler": {
+        "sampler": "euler",
+        "scheduler": "simple",
+        "steps": 6,
+        "minimum_steps": 4,
+        "cfg": 1.0
     }
 }

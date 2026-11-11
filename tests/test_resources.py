@@ -60,6 +60,7 @@ def test_resource_ids_exist():
             Arch.flux3,
             Arch.moss,
             Arch.fibo2,
+            Arch.minimax_h3,
         ):
             continue  # no model downloads yet
         model = res.find_resource(resource_id)
